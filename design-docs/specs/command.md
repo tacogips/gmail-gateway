@@ -27,6 +27,19 @@ command returns JSON.
 
 ## Commands
 
+### Doctor
+
+```bash
+<binary> doctor
+```
+
+Checks the resolved config source, whether supported environment overrides are
+set and selected, OAuth client readiness, configured access modes, token-store
+authentication state, and authenticated account identity. The command does not
+make a network request and never prints environment-variable values. It exits
+with status `0` when all checks pass, `3` for configuration problems, or `4`
+when only authentication needs attention.
+
 ### GraphQL
 
 ```bash

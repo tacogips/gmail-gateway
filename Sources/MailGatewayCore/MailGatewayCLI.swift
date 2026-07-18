@@ -36,11 +36,13 @@ public struct MailGatewayCLI {
             if shouldShowVersion(parsed) {
                 return versionResult()
             }
-            let configPath = try getStringFlag(parsed.flags, "config") ?? environment["MAIL_GATEWAY_CONFIG"]
+            let configPathFlag = try getStringFlag(parsed.flags, "config")
+            let configPath = configPathFlag ?? environment["MAIL_GATEWAY_CONFIG"]
             let pretty = try getBooleanFlag(parsed.flags, "pretty")
             return try runParsedCommand(
                 parsed,
                 configPath: configPath,
+                configPathFromFlag: configPathFlag != nil,
                 environment: environment,
                 pretty: pretty
             )
@@ -95,12 +97,20 @@ public struct MailGatewayCLI {
     private func runParsedCommand(
         _ parsed: ParsedArgs,
         configPath: String?,
+        configPathFromFlag: Bool,
         environment: [String: String],
         pretty: Bool
     ) throws -> MailGatewayCommandResult {
         let command = parsed.positionals.first
         let subcommand = parsed.positionals.dropFirst().first
         switch command {
+        case "doctor":
+            return try MailGatewayDoctor(
+                mode: mode,
+                configPath: configPath,
+                configPathFromFlag: configPathFromFlag,
+                environment: environment
+            ).run(pretty: pretty)
         case "graphql":
             return try runGraphQL(
                 flags: parsed.flags,
@@ -141,7 +151,7 @@ public struct MailGatewayCLI {
             )
         default:
             throw MailGatewayError(
-                "Supported commands: graphql, config validate, auth <login|revoke|status>, cache prune, file download",
+                "Supported commands: doctor, graphql, config validate, auth <login|revoke|status>, cache prune, file download",
                 code: .invalidArgument,
                 exitCode: .invalidCliUsage
             )
@@ -341,6 +351,7 @@ Usage:
   \(executableName) [--config <path>] [--pretty] <command>
 
 Commands:
+  doctor
   graphql --query <query>
   config validate
   auth <login|revoke|status> --credential <id>

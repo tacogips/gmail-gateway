@@ -5,7 +5,7 @@ func mailGatewayVersion() -> String {
        let trimmed = nonBlank(version) {
         return trimmed
     }
-    return "0.1.5"
+    return "0.1.6"
 }
 
 func nonBlank(_ value: String?) -> String? {
