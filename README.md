@@ -5,9 +5,9 @@ Swift command-line gateway for Gmail workflows
 ## Development
 
 ```bash
-nix develop
-task build
-task test
+mise install
+mise run build
+mise run test
 swift run mail-gateway-reader --help
 swift run mail-gateway-draft --help
 swift run mail-gateway-sender --help
@@ -29,19 +29,19 @@ needed, but use identifier-safe values such as `MailGatewayCore` and
 Build local formula archives:
 
 ```bash
-task build:homebrew -- darwin-arm64 darwin-x64
+mise run build:homebrew -- darwin-arm64 darwin-x64
 ```
 
 Render formulae after both platform archives exist:
 
 ```bash
-task homebrew:formula -- 0.1.2
+mise run homebrew:formula -- 0.1.2
 ```
 
 Render directly into the default sibling tap checkout:
 
 ```bash
-task homebrew:tap-formula -- 0.1.2
+mise run homebrew:tap-formula -- 0.1.2
 ```
 
 Install from the tap after the formula is published:

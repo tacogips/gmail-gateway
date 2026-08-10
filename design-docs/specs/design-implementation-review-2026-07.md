@@ -474,7 +474,7 @@ and outbound validation well. Missing coverage, in priority order:
 6. MIME construction: header folding, empty `To:`, both-bodies case.
 
 Smoke tests (`MailGatewaySwiftSmokeTests`) cover CLI flows well but run as a
-separate executable; wiring them into `task test` (if not already) and CI
+separate executable; wiring them into `mise run test` (if not already) and CI
 matters more as the surface grows.
 
 ## 9. Prioritized Recommendations

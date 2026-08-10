@@ -2,6 +2,7 @@
   "files": [
     ".agents/skills/apple-notarization-setup/SKILL.md",
     ".agents/skills/homebrew-release/SKILL.md",
+    ".agents/skills/ios-ipados-app-deploy/SKILL.md",
     ".agents/skills/macos-cask-release/SKILL.md",
     ".codex/skills/swift-coding-agent/SKILL.md",
     ".envrc",
@@ -12,6 +13,8 @@
     "AGENTS.md",
     "Package.swift",
     "README.md",
+    "Sources/MailGatewayCore/Command.swift",
+    "Sources/MailGatewayCore/Version.swift",
     "Sources/MailGatewayDraft/main.swift",
     "Sources/MailGatewayReader/main.swift",
     "Sources/MailGatewaySender/main.swift",
@@ -30,8 +33,12 @@
     "impl-plans/active/.gitkeep",
     "impl-plans/completed/.gitkeep",
     "impl-plans/templates/plan-template.md",
+    "mise.toml",
     "packaging/homebrew/README.md",
+    "scripts/build-homebrew-cask-release.sh",
     "scripts/build-homebrew-release.sh",
+    "scripts/release-homebrew-cask-local.sh",
+    "scripts/render-homebrew-cask.sh",
     "scripts/render-homebrew-formula.sh"
   ]
 }

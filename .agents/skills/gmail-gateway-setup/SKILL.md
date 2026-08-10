@@ -131,6 +131,6 @@ Before handoff, run:
 ```bash
 swift build
 swift run mail-gateway-swift-smoke-tests
-task ci
+mise run ci
 git diff --check
 ```

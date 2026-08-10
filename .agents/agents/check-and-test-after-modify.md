@@ -230,7 +230,7 @@ This is useless because:
 
 1. **TypeScript type check (recommended first)**: `bun run typecheck` or `tsc --noEmit`
    - Fast type check without producing output
-2. **If Taskfile available**: Check for `task typecheck` or `task lint` targets
+2. **If Taskfile available**: Check for `task typecheck` or `mise run lint` targets
 
 ### For Testing
 
@@ -238,7 +238,7 @@ This is useless because:
 2. **Specific file**: `vitest run src/usecase/userService.test.ts`
 3. **Verbose output**: `vitest run --reporter=verbose` when debugging failures
 4. **Watch mode**: `vitest` or `vitest --watch` for continuous testing
-5. **If Taskfile available**: Check for `task test` target
+5. **If Taskfile available**: Check for `mise run test` target
 
 ### Test Commands
 

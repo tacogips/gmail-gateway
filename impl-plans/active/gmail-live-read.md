@@ -73,7 +73,7 @@ public struct MailGatewayReaderService {
 | Module | File Path | Status | Tests |
 |--------|-----------|--------|-------|
 | Gmail API Read Client | `Sources/MailGatewayCore/GmailLiveReader.swift` | COMPLETED | `swift run mail-gateway-swift-smoke-tests` |
-| Service Integration And Verification | `Sources/MailGatewayCore/MailGatewayCore.swift`, `Sources/MailGatewaySwiftSmokeTests/main.swift`, `README.md` | BLOCKED_ON_CREDENTIALS | `task ci`; direct no-config CLI checks |
+| Service Integration And Verification | `Sources/MailGatewayCore/MailGatewayCore.swift`, `Sources/MailGatewaySwiftSmokeTests/main.swift`, `README.md` | BLOCKED_ON_CREDENTIALS | `mise run ci`; direct no-config CLI checks |
 | Starred Thread Search | `Sources/MailGatewayCore/GmailLiveReader.swift`, `Sources/MailGatewayCore/MailGatewayGraphQL.swift`, `Sources/MailGatewaySwiftSmokeTests/main.swift`, `README.md`, `design-docs/specs/design-mail-gateway.md` | COMPLETED | `swift run mail-gateway-swift-smoke-tests` |
 
 ## Dependencies
@@ -134,7 +134,7 @@ Expose a first-class `starred` filter on thread search and combine it with the e
 **Notes**: User clarified the end state: no config required by default, and Gmail mail retrieval should be verified through env/default credential setup if needed.
 
 ### Session: 2026-06-23 12:40
-**Tasks Completed**: Wired live reader into service methods; added no-config missing-auth smoke coverage; ran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `task ci`, `git diff --check`, and direct no-config CLI checks.
+**Tasks Completed**: Wired live reader into service methods; added no-config missing-auth smoke coverage; ran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `mise run ci`, `git diff --check`, and direct no-config CLI checks.
 **Tasks In Progress**: Live Gmail retrieval with real credentials
 **Blockers**: No Gmail OAuth client JSON or token JSON is available in kinko, direnv, default config paths, or common local files. `auth login` fails because `~/.config/mail-gateway/google-client.json` is missing.
 **Notes**: Source/test updates were applied by temporary Riela command workflow after packaged Riela agent workflows stalled in review. kinko now has the project-scope default credential path keys.
@@ -143,25 +143,25 @@ Expose a first-class `starred` filter on thread search and combine it with the e
 **Tasks Completed**: Reviewed current git diff and tightened live-read behavior.
 **Tasks In Progress**: Live Gmail retrieval with real credentials remains blocked by missing local/env credential material.
 **Blockers**: No Gmail OAuth client JSON or token JSON is available in kinko, direnv, default config paths, or common local files.
-**Notes**: Removed accidental live Gmail attachment fetch from `attachment(...)`, kept Gmail message bodies out of GraphQL-shaped message payloads, preserved kinko/env token JSON by not writing refreshed tokens back to disk when token JSON is provided inline, made GraphQL field detection ignore string literals, added cached-attachment and projection smoke coverage, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `task ci`, and `git diff --check`.
+**Notes**: Removed accidental live Gmail attachment fetch from `attachment(...)`, kept Gmail message bodies out of GraphQL-shaped message payloads, preserved kinko/env token JSON by not writing refreshed tokens back to disk when token JSON is provided inline, made GraphQL field detection ignore string literals, added cached-attachment and projection smoke coverage, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `mise run ci`, and `git diff --check`.
 
 ### Session: 2026-06-23 13:55
 **Tasks Completed**: Fixed GraphQL argument parsing found during review.
 **Tasks In Progress**: Live Gmail retrieval with real credentials remains blocked by missing local/env credential material.
 **Blockers**: No Gmail OAuth client JSON or token JSON is available in kinko, direnv, default config paths, or common local files.
-**Notes**: Replaced substring-based argument lookup with a string-literal-aware argument-label scanner so values such as `attachmentId: "accountId:"` do not corrupt parsing, added CLI smoke coverage for the case, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `task ci`, and `git diff --check`.
+**Notes**: Replaced substring-based argument lookup with a string-literal-aware argument-label scanner so values such as `attachmentId: "accountId:"` do not corrupt parsing, added CLI smoke coverage for the case, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `mise run ci`, and `git diff --check`.
 
 ### Session: 2026-06-23 13:59
 **Tasks Completed**: Reviewed the current diff again and tightened GraphQL projection behavior.
 **Tasks In Progress**: Live Gmail retrieval with real credentials remains blocked by missing local/env credential material.
 **Blockers**: No Gmail OAuth client JSON or token JSON is available in kinko, direnv, default config paths, or common local files.
-**Notes**: Made `attachment(...)` return only requested attachment fields, allowed whitespace around GraphQL argument colons, added smoke coverage for both cases, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `task ci`, and `git diff --check`.
+**Notes**: Made `attachment(...)` return only requested attachment fields, allowed whitespace around GraphQL argument colons, added smoke coverage for both cases, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `mise run ci`, and `git diff --check`.
 
 ### Session: 2026-06-23 14:03
 **Tasks Completed**: Reviewed current git diff and hardened lightweight GraphQL parsing/projection.
 **Tasks In Progress**: Live Gmail retrieval with real credentials remains blocked by missing local/env credential material.
 **Blockers**: No Gmail OAuth client JSON or token JSON is available in kinko, direnv, default config paths, or common local files.
-**Notes**: Scoped root operation dispatch to root fields, scoped argument labels to GraphQL argument parentheses, made thread/attachment projection use direct selection fields, added smoke coverage for nested selection text and aliases, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `task ci`, and `git diff --check`.
+**Notes**: Scoped root operation dispatch to root fields, scoped argument labels to GraphQL argument parentheses, made thread/attachment projection use direct selection fields, added smoke coverage for nested selection text and aliases, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `mise run ci`, and `git diff --check`.
 
 ### Session: 2026-06-23 14:04
 **Tasks Completed**: Restored live Gmail body extraction and remote attachment lookup while preserving offline smoke behavior.
@@ -173,7 +173,7 @@ Expose a first-class `starred` filter on thread search and combine it with the e
 **Tasks Completed**: Final review of current git diff and GraphQL parser cleanup.
 **Tasks In Progress**: None for the verified Gmail read path.
 **Blockers**: None for kinko-backed live verification.
-**Notes**: Kept the current live Gmail body/attachment behavior intact, removed dead parser helper code, confirmed root-field dispatch and direct-selection projection coverage, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `task ci`, and `git diff --check`.
+**Notes**: Kept the current live Gmail body/attachment behavior intact, removed dead parser helper code, confirmed root-field dispatch and direct-selection projection coverage, and reran `swift build`, `swift run mail-gateway-swift-smoke-tests`, `mise run ci`, and `git diff --check`.
 
 ### Session: 2026-06-25 16:20
 **Tasks Completed**: TASK-002

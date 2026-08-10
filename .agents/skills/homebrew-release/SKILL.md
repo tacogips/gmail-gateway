@@ -1,6 +1,6 @@
 ---
 name: homebrew-release
-description: Use when building, validating, publishing, or tap-rendering Homebrew Formula releases for this Swift project, especially separate reader/draft/sender command installs, scripts/build-homebrew-release.sh, scripts/render-homebrew-formula.sh, task build:homebrew, homebrew:formula, Nix package/app release checks, or tap formula updates.
+description: Use when building, validating, publishing, or tap-rendering Homebrew Formula releases for this Swift project, especially separate reader/draft/sender command installs, scripts/build-homebrew-release.sh, scripts/render-homebrew-formula.sh, mise run build:homebrew, homebrew:formula, Nix package/app release checks, or tap formula updates.
 ---
 
 # Homebrew Release
@@ -62,8 +62,8 @@ Formula class names must be:
 Build and test:
 
 ```bash
-task build
-task test
+mise run build
+mise run test
 swift run mail-gateway-reader --help
 swift run mail-gateway-draft --help
 swift run mail-gateway-sender --help
@@ -83,29 +83,29 @@ nix run .#mail-gateway-sender -- --help
 Build all Formula archives:
 
 ```bash
-task build:homebrew -- darwin-arm64 darwin-x64
+mise run build:homebrew -- darwin-arm64 darwin-x64
 ```
 
 Build or render one command only if the scripts support command selection:
 
 ```bash
 version="$(tr -d '[:space:]' < VERSION)"
-task build:homebrew -- mail-gateway-reader darwin-arm64 darwin-x64
-task homebrew:formula -- "$version" mail-gateway-reader
+mise run build:homebrew -- mail-gateway-reader darwin-arm64 darwin-x64
+mise run homebrew:formula -- "$version" mail-gateway-reader
 ```
 
 Render formulae locally:
 
 ```bash
 version="$(tr -d '[:space:]' < VERSION)"
-task homebrew:formula -- "$version"
+mise run homebrew:formula -- "$version"
 ```
 
 Render formulae into the default sibling tap:
 
 ```bash
 version="$(tr -d '[:space:]' < VERSION)"
-task homebrew:tap-formula -- "$version"
+mise run homebrew:tap-formula -- "$version"
 ```
 
 For a custom tap path:
@@ -176,3 +176,13 @@ Formula tests should use a stable command surface. Prefer `--help` unless all
 three command executables intentionally expose a shared `--version` contract.
 If existing local installs conflict during verification, upgrade or reinstall the
 specific Formula being checked; do not uninstall unrelated Formulae.
+
+## Tap API Metadata Gate
+
+After pushing the three Formula files, require `tacogips/homebrew-tap`'s
+`update-api-metadata.yml` workflow to succeed for that commit. Verify the
+GitHub Raw JSON for `mail-gateway-reader`, `mail-gateway-draft`, and
+`mail-gateway-sender`. Each `.versions.stable` must equal the release version,
+and each `.ruby_source_checksum.sha256` must equal the SHA-256 of its committed
+Formula. Do not consider the release complete while any endpoint is missing or
+stale.

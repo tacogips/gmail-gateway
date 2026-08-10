@@ -134,7 +134,7 @@ Implement interactive Gmail OAuth login and validate resulting credentials throu
 **Tasks Completed**: Self-review improvements and repo-level verification
 **Tasks In Progress**: Live Gmail verification
 **Blockers**: `~/.config/mail-gateway/config.toml` is still missing and `MAIL_GATEWAY_CONFIG` is unset.
-**Notes**: Added ready-token smoke coverage and explicit GraphQL error payload type annotations. `task ci` and `git diff --check` passed. Temporary CLI checks verified config validation, ready auth status, invalid OAuth client login failure, and the missing default config failure.
+**Notes**: Added ready-token smoke coverage and explicit GraphQL error payload type annotations. `mise run ci` and `git diff --check` passed. Temporary CLI checks verified config validation, ready auth status, invalid OAuth client login failure, and the missing default config failure.
 
 ## Related Plans
 

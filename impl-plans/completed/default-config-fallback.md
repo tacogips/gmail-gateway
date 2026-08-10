@@ -112,7 +112,7 @@ Implement built-in defaults for missing implicit config files while preserving e
 **Tasks Completed**: TASK-001
 **Tasks In Progress**: None
 **Blockers**: None
-**Notes**: Implemented synthesized defaults for missing implicit config. Verified default `config validate`, default `auth status`, default `auth login` missing-client failure, strict explicit missing config failure, `task ci`, and `git diff --check`.
+**Notes**: Implemented synthesized defaults for missing implicit config. Verified default `config validate`, default `auth status`, default `auth login` missing-client failure, strict explicit missing config failure, `mise run ci`, and `git diff --check`.
 
 ## Related Plans
 

@@ -27,7 +27,7 @@ Make outbound mail behavior explicit by binary:
 
 - `swift build`
 - `swift run mail-gateway-swift-smoke-tests`
-- `task ci`
+- `mise run ci`
 - `git diff --check`
 
 ## Progress Log
@@ -36,4 +36,4 @@ Make outbound mail behavior explicit by binary:
 - 2026-06-25: Added `mail-gateway-draft` and `mail-gateway-sender` products and executable targets, write-mode CLI routing, draft-default/direct-send GraphQL dispatch, Gmail draft/send adapters, smoke coverage, and README/Taskfile updates.
 - 2026-06-25: Renamed the default draft executable from `mail-gateway` to `mail-gateway-draft` so the binary family is `mail-gateway-reader`, `mail-gateway-draft`, and `mail-gateway-sender`.
 - 2026-06-25: Added `createDraft` to the write GraphQL surface so `mail-gateway-sender` includes draft creation while keeping `sendMessage` as direct send.
-- 2026-06-25: Verified with `swift build`, `swift run mail-gateway-swift-smoke-tests`, `task ci`, and `git diff --check`.
+- 2026-06-25: Verified with `swift build`, `swift run mail-gateway-swift-smoke-tests`, `mise run ci`, and `git diff --check`.
