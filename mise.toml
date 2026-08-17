@@ -22,6 +22,7 @@ swiftlint = "latest"
 gitleaks = "latest"
 github-cli = "latest"
 gcloud = "latest"
+pre-commit = "latest"
 
 [tasks."default"]
 description = "Show available tasks"
@@ -95,4 +96,23 @@ if [ -z "$*" ]; then
 fi
 scripts/render-homebrew-formula.sh "$*" "../homebrew-tap/Formula"
 
+'''
+
+[tasks.install-git-hooks]
+description = "Install mise tools and the repository pre-commit hook"
+run = '''
+mise install
+
+hooks_path=$(git config --local --get core.hooksPath || true)
+if [ "$hooks_path" = ".git/hooks" ]; then
+  git config --local --unset-all core.hooksPath
+  hooks_path=""
+fi
+
+if [ -z "$hooks_path" ]; then
+  mise exec -- pre-commit install
+else
+  mise exec -- pre-commit validate-config .pre-commit-config.yaml
+  echo "Using existing custom Git hooks path: $hooks_path"
+fi
 '''
