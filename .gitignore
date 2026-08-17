@@ -12,7 +12,6 @@ Casks/
 *.xcworkspace/
 
 # Local environment files
-.pre-commit-config.yaml
 **/.env
 **/*.private*
 
