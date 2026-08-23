@@ -1,7 +1,7 @@
 # Default Config Fallback Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-mail-gateway.md#configuration-design
+**Design Reference**: design-docs/specs/design-gmail-gateway.md#configuration-design
 **Created**: 2026-06-23
 **Last Updated**: 2026-06-23
 
@@ -9,7 +9,7 @@
 
 ## Design Document Reference
 
-**Source**: design-docs/specs/design-mail-gateway.md
+**Source**: design-docs/specs/design-gmail-gateway.md
 
 ### Summary
 
@@ -18,7 +18,7 @@ Allow the reader CLI to start from built-in local defaults when the implicit def
 ### Scope
 
 **Included**: Synthesized default config for missing implicit config path, default Gmail credential/account IDs, default local storage/token/client paths, smoke tests, docs.
-**Excluded**: Writing config files to disk automatically, bypassing explicit `--config` or `MAIL_GATEWAY_CONFIG` failures, live Gmail OAuth without a client JSON file.
+**Excluded**: Writing config files to disk automatically, bypassing explicit `--config` or `GMAIL_GATEWAY_CONFIG` failures, live Gmail OAuth without a client JSON file.
 
 ---
 
@@ -26,13 +26,13 @@ Allow the reader CLI to start from built-in local defaults when the implicit def
 
 ### 1. Config Loader Fallback
 
-#### Sources/MailGatewayCore/ConfigLoading.swift
+#### Sources/GmailGatewayCore/ConfigLoading.swift
 
 **Status**: Completed
 
 ```swift
-public enum MailGatewayConfigLoader {
-    public static func loadConfig(configPath: String?, environment: [String: String]) throws -> MailGatewayConfig
+public enum GmailGatewayConfigLoader {
+    public static func loadConfig(configPath: String?, environment: [String: String]) throws -> GmailGatewayConfig
     public static func validateConfig(configPath: String?, environment: [String: String]) throws -> [String: Any]
 }
 ```
@@ -45,7 +45,7 @@ public enum MailGatewayConfigLoader {
 
 ### 2. Tests And Documentation
 
-#### Sources/MailGatewaySwiftSmokeTests/main.swift
+#### Sources/GmailGatewaySwiftSmokeTests/main.swift
 #### README.md
 
 **Status**: Completed
@@ -66,8 +66,8 @@ func testMissingDefaultConfigUsesFallback(cleanup: inout [String]) throws
 
 | Module | File Path | Status | Tests |
 |--------|-----------|--------|-------|
-| Config Loader Fallback | `Sources/MailGatewayCore/ConfigLoading.swift` | COMPLETED | Smoke tests passed |
-| Tests And Documentation | `Sources/MailGatewaySwiftSmokeTests/main.swift`, `README.md` | COMPLETED | Smoke tests passed |
+| Config Loader Fallback | `Sources/GmailGatewayCore/ConfigLoading.swift` | COMPLETED | Smoke tests passed |
+| Tests And Documentation | `Sources/GmailGatewaySwiftSmokeTests/main.swift`, `README.md` | COMPLETED | Smoke tests passed |
 
 ## Dependencies
 
@@ -81,7 +81,7 @@ func testMissingDefaultConfigUsesFallback(cleanup: inout [String]) throws
 
 **Status**: Completed
 **Parallelizable**: No
-**Deliverables**: `Sources/MailGatewayCore/ConfigLoading.swift`, `Sources/MailGatewaySwiftSmokeTests/main.swift`, `README.md`
+**Deliverables**: `Sources/GmailGatewayCore/ConfigLoading.swift`, `Sources/GmailGatewaySwiftSmokeTests/main.swift`, `README.md`
 **Dependencies**: None
 
 **Description**:
@@ -106,7 +106,7 @@ Implement built-in defaults for missing implicit config files while preserving e
 **Tasks Completed**: None yet
 **Tasks In Progress**: TASK-001
 **Blockers**: None
-**Notes**: User requested default startup behavior when `~/.config/mail-gateway/config.toml` is missing.
+**Notes**: User requested default startup behavior when `~/.config/gmail-gateway/config.toml` is missing.
 
 ### Session: 2026-06-23 11:10
 **Tasks Completed**: TASK-001

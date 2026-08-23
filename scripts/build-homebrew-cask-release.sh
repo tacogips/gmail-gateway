@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-product="mail-gateway-reader"
+product="gmail-gateway-reader"
 artifact_name=""
 
 usage() {

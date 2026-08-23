@@ -8,9 +8,9 @@ Current implementation
 
 The package ships three user-facing executables:
 
-- `mail-gateway-reader`: read-only GraphQL and local file/cache/auth commands
-- `mail-gateway-draft`: read plus draft-oriented write mutations
-- `mail-gateway-sender`: read plus explicit direct-send mutations
+- `gmail-gateway-reader`: read-only GraphQL and local file/cache/auth commands
+- `gmail-gateway-draft`: read plus draft-oriented write mutations
+- `gmail-gateway-sender`: read plus explicit direct-send mutations
 
 Each binary accepts the same command surface:
 
@@ -21,7 +21,7 @@ Each binary accepts the same command surface:
 <binary> version
 ```
 
-`--config <path>` overrides the default config path. `MAIL_GATEWAY_CONFIG` is
+`--config <path>` overrides the default config path. `GMAIL_GATEWAY_CONFIG` is
 also honored when the flag is omitted. `--pretty` formats JSON output where the
 command returns JSON.
 

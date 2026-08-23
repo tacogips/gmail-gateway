@@ -1,19 +1,19 @@
 {
   "variables": {
     "DESCRIPTION": "Swift command-line gateway for Gmail workflows",
-    "EXECUTABLE_NAME": "mail-gateway-reader",
-    "GITHUB_REPOSITORY": "tacogips/mail-gateway",
+    "EXECUTABLE_NAME": "gmail-gateway-reader",
+    "GITHUB_REPOSITORY": "tacogips/gmail-gateway",
     "HOMEBREW_CASK_TOKEN": "",
-    "HOMEBREW_FORMULA_CLASS": "MailGatewayReader",
+    "HOMEBREW_FORMULA_CLASS": "GmailGatewayReader",
     "HOMEBREW_TAP": "tacogips/tap",
     "HOMEBREW_TAP_DIR": "../homebrew-tap",
-    "HOMEPAGE": "https://github.com/tacogips/mail-gateway",
+    "HOMEPAGE": "https://github.com/tacogips/gmail-gateway",
     "LICENSE": "MIT",
     "MACOS_VERSION": "v14",
-    "PROJECT_NAME": "mail-gateway",
-    "SWIFT_COMMAND_TYPE": "MailGatewayCLI",
-    "SWIFT_EXECUTABLE_TARGET": "MailGatewayReader",
-    "SWIFT_LIBRARY_TARGET": "MailGatewayCore",
+    "PROJECT_NAME": "gmail-gateway",
+    "SWIFT_COMMAND_TYPE": "GmailGatewayCLI",
+    "SWIFT_EXECUTABLE_TARGET": "GmailGatewayReader",
+    "SWIFT_LIBRARY_TARGET": "GmailGatewayCore",
     "SWIFT_TOOLS_VERSION": "6.0",
     "VERSION": "0.1.2"
   }

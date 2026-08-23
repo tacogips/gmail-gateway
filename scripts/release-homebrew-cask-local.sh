@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 artifact_name=""
-github_repository="tacogips/mail-gateway"
+github_repository="tacogips/gmail-gateway"
 
 usage() {
   cat <<EOF
@@ -89,7 +89,7 @@ release_notes="Signed, notarized, and stapled macOS DMG archives for the Homebre
 if ! gh release view "$release_tag" --repo "$github_repository" >/dev/null 2>&1; then
   gh release create "$release_tag" \
     --repo "$github_repository" \
-    --title "mail-gateway $release_tag" \
+    --title "gmail-gateway $release_tag" \
     --notes "$release_notes"
 fi
 

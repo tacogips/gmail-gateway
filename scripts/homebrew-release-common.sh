@@ -1,7 +1,7 @@
 homebrew_products=(
-  "mail-gateway-reader"
-  "mail-gateway-draft"
-  "mail-gateway-sender"
+  "gmail-gateway-reader"
+  "gmail-gateway-draft"
+  "gmail-gateway-sender"
 )
 
 homebrew_product_list() {
@@ -35,9 +35,9 @@ validate_homebrew_product() {
 
 homebrew_formula_class() {
   case "$1" in
-    mail-gateway-reader) printf '%s\n' "MailGatewayReader" ;;
-    mail-gateway-draft) printf '%s\n' "MailGatewayDraft" ;;
-    mail-gateway-sender) printf '%s\n' "MailGatewaySender" ;;
+    gmail-gateway-reader) printf '%s\n' "GmailGatewayReader" ;;
+    gmail-gateway-draft) printf '%s\n' "GmailGatewayDraft" ;;
+    gmail-gateway-sender) printf '%s\n' "GmailGatewaySender" ;;
     *)
       validate_homebrew_product "$1"
       ;;
@@ -46,9 +46,9 @@ homebrew_formula_class() {
 
 homebrew_formula_desc() {
   case "$1" in
-    mail-gateway-reader) printf '%s\n' "Read-only Gmail workflow gateway" ;;
-    mail-gateway-draft) printf '%s\n' "Draft-writing Gmail workflow gateway" ;;
-    mail-gateway-sender) printf '%s\n' "Direct-send Gmail workflow gateway" ;;
+    gmail-gateway-reader) printf '%s\n' "Read-only Gmail workflow gateway" ;;
+    gmail-gateway-draft) printf '%s\n' "Draft-writing Gmail workflow gateway" ;;
+    gmail-gateway-sender) printf '%s\n' "Direct-send Gmail workflow gateway" ;;
     *)
       validate_homebrew_product "$1"
       ;;

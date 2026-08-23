@@ -27,7 +27,7 @@ Examples:
   scripts/build-homebrew-release.sh
   scripts/build-homebrew-release.sh --dry-run darwin-arm64 darwin-x64
   scripts/build-homebrew-release.sh darwin-arm64 darwin-x64
-  scripts/build-homebrew-release.sh mail-gateway-reader darwin-arm64 darwin-x64
+  scripts/build-homebrew-release.sh gmail-gateway-reader darwin-arm64 darwin-x64
 
 This builder stages Swift macOS archives for Homebrew formulae. It does not
 publish release assets, mutate a tap, render a formula, or push commits.

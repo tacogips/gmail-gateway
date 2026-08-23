@@ -1,11 +1,11 @@
 # Message File Materialization
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-mail-gateway.md#attachment-handling
+**Design Reference**: design-docs/specs/design-gmail-gateway.md#attachment-handling
 
 ## Objective
 
-Allow mail-gateway-reader to expose per-message body and temporary-file
+Allow gmail-gateway-reader to expose per-message body and temporary-file
 metadata without placing file payloads in GraphQL. GraphQL returns
 vendor-neutral `downloadKey` values. A separate gateway command downloads a
 selected file or selected files into local paths only when a caller explicitly
@@ -13,16 +13,16 @@ needs them.
 
 ## Deliverables
 
-- `Sources/MailGatewayCore/MailGatewayCore.swift`
-  - Add message-file metadata helpers on `MailGatewayReaderService`.
+- `Sources/GmailGatewayCore/GmailGatewayCore.swift`
+  - Add message-file metadata helpers on `GmailGatewayReaderService`.
   - Add a GraphQL-shaped field for reading a message file set.
   - Return `downloadKey` values, not file payloads, from GraphQL.
   - Add a `file download` command that resolves one or more keys and returns
     local paths.
-- `Sources/MailGatewaySwiftSmokeTests/main.swift`
+- `Sources/GmailGatewaySwiftSmokeTests/main.swift`
   - Cover body and temporary file materialization.
   - Cover cached message file set lookup.
-- `README.md` and `design-docs/specs/design-mail-gateway.md`
+- `README.md` and `design-docs/specs/design-gmail-gateway.md`
   - Document the new local file materialization behavior.
 
 ## Completion Criteria
@@ -35,7 +35,7 @@ needs them.
 - [x] Repeated `file download --key` values resolve a batch and return
   per-file local paths without filename collisions.
 - [x] `swift build` passes.
-- [x] `swift run mail-gateway-swift-smoke-tests` passes.
+- [x] `swift run gmail-gateway-swift-smoke-tests` passes.
 - [x] SwiftLint has been run or unavailability is reported.
 
 ## Progress Log
@@ -49,9 +49,9 @@ live Gmail API retrieval remains out of scope for this change.
 ### Session: 2026-06-20 Completion
 
 **Tasks Completed**: Added vendor-neutral message file metadata with opaque
-download keys, added `mail-gateway-reader file download --key`, updated smoke
+download keys, added `gmail-gateway-reader file download --key`, updated smoke
 coverage, and documented the no-payload GraphQL boundary. The download command
 also supports repeated `--key` values for batch materialization.
-**Verification**: `swift build` passed; `swift run mail-gateway-swift-smoke-tests`
+**Verification**: `swift build` passed; `swift run gmail-gateway-swift-smoke-tests`
 passed; `swiftlint --quiet` passed; Xcode toolchain `/usr/bin/xcrun swiftlint
 --quiet` passed.

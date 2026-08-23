@@ -1,15 +1,15 @@
 # Implementation and Specification Review (2026-07)
 
-This document records a full review of the `mail-gateway` implementation and its
+This document records a full review of the `gmail-gateway` implementation and its
 specifications, identifying defects, spec/implementation divergences, security and
 robustness concerns, performance issues, and maintainability improvements.
 No code changes were made as part of this review.
 
 Reviewed sources:
 
-- All Swift files under `Sources/MailGatewayCore/`, `Sources/MailGateway{Reader,Draft,Sender}/`
-- `Tests/AppCoreTests/CommandTests.swift`, `Sources/MailGatewaySwiftSmokeTests/`
-- `design-docs/specs/design-mail-gateway.md`, `architecture.md`, `command.md`
+- All Swift files under `Sources/GmailGatewayCore/`, `Sources/GmailGateway{Reader,Draft,Sender}/`
+- `Tests/AppCoreTests/CommandTests.swift`, `Sources/GmailGatewaySwiftSmokeTests/`
+- `design-docs/specs/design-gmail-gateway.md`, `architecture.md`, `command.md`
 - `Package.swift`, `README.md`
 
 Severity legend: **Critical** = feature broken or spec guarantee violated in a way
@@ -22,7 +22,7 @@ callers will hit; **High** = likely incorrect behavior or meaningful risk;
 
 Nothing in the production code ever writes `body.txt` / `body.html` under the
 message cache directory. The only writer is a smoke-test fixture
-(`Sources/MailGatewaySwiftSmokeTests/MessageFileSmokeTests.swift:129`).
+(`Sources/GmailGatewaySwiftSmokeTests/MessageFileSmokeTests.swift:129`).
 
 - `messageFileSet` (`MessageFileDownloads.swift:100-125`) only lists files that
   already exist on disk, so in real usage it always returns `hasFiles: false`.
@@ -32,7 +32,7 @@ message cache directory. The only writer is a smoke-test fixture
   "Message file is not materialized locally".
 
 The entire body/temporary-file materialization flow described in
-`design-mail-gateway.md` ("GraphQL returns downloadKey metadata, and file bytes
+`design-gmail-gateway.md` ("GraphQL returns downloadKey metadata, and file bytes
 are retrieved only by an explicit gateway download command") is unreachable for
 bodies. Either a body-materialization step must be implemented (e.g., during
 `message` / `thread` retrieval or inside `file download`), or the
@@ -41,7 +41,7 @@ text until it works.
 
 ### 1.2 GraphQL variables are parsed and discarded (Critical)
 
-`MailGatewayCLI.swift:144`:
+`GmailGatewayCLI.swift:144`:
 
 ```swift
 _ = try loadVariables(flags: flags)
@@ -91,7 +91,7 @@ Using `/users/me/threads.list` would align semantics with the spec.
 ### 1.5 Missing search filters silently ignored (High)
 
 `ThreadSearchInput` in the spec includes `unread`, `from`, and `hasAttachments`.
-None are implemented in `MailGatewayGraphQL.swift:43-62` or
+None are implemented in `GmailGatewayGraphQL.swift:43-62` or
 `GmailLiveReader.swift`. Because argument extraction is lookup-based, an
 unsupported argument is silently dropped rather than rejected — a caller
 sending `unread: true` gets unfiltered results with no warning. Unknown/
@@ -99,13 +99,13 @@ unsupported arguments should either work or produce an error.
 
 ### 1.6 `cache prune` reports success on failed deletion (Medium)
 
-`MailGatewayCore.swift:343` uses `try? FileManager.default.removeItem(...)` and
+`GmailGatewayCore.swift:343` uses `try? FileManager.default.removeItem(...)` and
 then unconditionally appends the path to `prunedPaths`. A permission failure is
 reported as a successful prune.
 
 ### 1.7 Cached-attachment lookup can match the wrong file (Medium)
 
-`getAttachment` (`MailGatewayCore.swift:222-238`) matches directory entries by
+`getAttachment` (`GmailGatewayCore.swift:222-238`) matches directory entries by
 the prefix `"<attachmentId>-"`. If one attachment ID is a prefix of another
 (e.g., `abc` and `abc-def`), the entry `abc-def-<filename>` matches prefix
 `abc-` and the wrong attachment metadata is returned. The stored-name scheme
@@ -114,7 +114,7 @@ hashed-prefix form already exists (`attachmentStorageFilenamePrefix`); using it
 unconditionally, or storing a small metadata sidecar, would remove the
 ambiguity. Additionally, this cached path returns `mimeType:
 "application/octet-stream"` and `sizeBytes: null` even though the file is local
-and could be stat'ed (`MailGatewayCore.swift:243-254`), and no metadata
+and could be stat'ed (`GmailGatewayCore.swift:243-254`), and no metadata
 consistency check is performed although the spec requires "if the file already
 exists and its metadata matches, the cached path is reused".
 
@@ -147,18 +147,18 @@ operators, which preserves the time component).
 
 ### 2.1 Reader write-blocking is textual, not schema-based (High)
 
-The spec states: "`mail-gateway-reader` must fail fast if a send mutation is
+The spec states: "`gmail-gateway-reader` must fail fast if a send mutation is
 submitted. This is enforced by exposing a reduced schema rather than only
 checking at resolver runtime." The implementation is exactly the opposite: a
 substring scan for `sendMessage` / `createDraft` at brace depth 1
-(`MailGatewayGraphQL.swift:28-34`). It works for straightforward queries, but
+(`GmailGatewayGraphQL.swift:28-34`). It works for straightforward queries, but
 it is not a reduced schema, and the guarantee depends on the correctness of a
 hand-rolled scanner (see 4.1). Either implement per-binary schemas or amend the
 spec to describe the actual enforcement and its limits.
 
 ### 2.2 Message bodies are inlined despite spec prohibition (High)
 
-`design-mail-gateway.md` Schema Principles: "body and temporary-file payloads
+`design-gmail-gateway.md` Schema Principles: "body and temporary-file payloads
 are never inlined into GraphQL responses". But the same spec's
 `MailMessage` type defines `textBody` / `htmlBody`, and the implementation
 returns full decoded bodies inline (`GmailLiveReader.swift:383-384`). The spec
@@ -172,21 +172,21 @@ other side.
 Schema Principles: "filesystem materialization paths are returned only by
 explicit gateway download commands, not by GraphQL message-file metadata."
 `attachment(...)` returns `localPath` for cached files
-(`MailGatewayCore.swift:234-244`). Also the spec's own `MailAttachment` type
+(`GmailGatewayCore.swift:234-244`). Also the spec's own `MailAttachment` type
 still declares `localPath: String` — another internal spec contradiction.
 
 ### 2.4 Rejected-attachment reporting not implemented (Medium)
 
 Spec: mutations return "rejected attachment paths with reasons if partial
 validation fails". Implementation throws on the first invalid path
-(`MailGatewayWriteService.swift:78`) and `rejectedAttachments` is always `[]`
+(`GmailGatewayWriteService.swift:78`) and `rejectedAttachments` is always `[]`
 (`GmailLiveWriter.swift:34,63`).
 
 ### 2.5 Error model only partially surfaced through GraphQL (Medium)
 
 `executeReaderGraphQL` / `executeWriteGraphQL` wrap only errors whose exit code
 is `.graphqlExecutionError` into the GraphQL `errors` array
-(`MailGatewayGraphQL.swift:10,116`). Provider API failures and rate limiting
+(`GmailGatewayGraphQL.swift:10,116`). Provider API failures and rate limiting
 (`PROVIDER_API_ERROR`, `PROVIDER_RATE_LIMITED`, exit code 6) escape to the CLI
 error path and appear as a non-GraphQL error object on stderr. The spec's error
 model lists these as GraphQL extension codes. Callers must handle two error
@@ -206,7 +206,7 @@ The spec defines a provider adapter contract (`listAccountsCapabilities`,
 `searchThreads`, ..., `interactiveAuthorize`) with the GraphQL layer depending
 only on the canonical interface. The implementation hardcodes
 `GmailLiveReader()` / `GmailLiveWriter()` construction inside the service layer
-(`MailGatewayCore.swift:190,207,213,261`; `MailGatewayWriteService.swift:82,89`).
+(`GmailGatewayCore.swift:190,207,213,261`; `GmailGatewayWriteService.swift:82,89`).
 Acceptable for v1, but the extensibility promise ("adding a new provider
 requires a new adapter implementation") currently requires touching the service
 layer everywhere. Introducing a `MailProviderAdapter` protocol would make the
@@ -268,8 +268,8 @@ is empty and recipients are only in `cc`/`bcc`, producing a malformed empty
 
 ### 4.1 Hand-rolled GraphQL scanner is the enforcement boundary (High)
 
-The read-only guarantee of `mail-gateway-reader` (a stated security constraint)
-rests on `rangeOfField` string scanning (`MailGatewayGraphQL.swift:280-336`).
+The read-only guarantee of `gmail-gateway-reader` (a stated security constraint)
+rests on `rangeOfField` string scanning (`GmailGatewayGraphQL.swift:280-336`).
 The scanner handles strings and brace depth but not GraphQL comments
 (`# sendMessage` on a line would false-positive; conversely a comment cannot
 smuggle a mutation, so the failure mode is deny-side, which is safe), block
@@ -309,7 +309,7 @@ fail. Either bind both stacks or rewrite the authorization redirect host to
 `credentialEnvSuffix` (`ConfigLoading.swift:39-49`) maps every
 non-alphanumeric character to `_` and uppercases, so credential IDs
 `gmail-personal`, `gmail_personal`, and `gmail.personal` all resolve to
-`MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_...`. An env override intended for one
+`GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_...`. An env override intended for one
 credential silently applies to another. Config loading should reject configs
 whose credential IDs produce duplicate env suffixes.
 
@@ -338,7 +338,7 @@ retry with jitter for idempotent GETs would meaningfully improve reliability.
 
 ## 5. Specification Document Issues
 
-### 5.1 Internal contradictions in design-mail-gateway.md (Medium)
+### 5.1 Internal contradictions in design-gmail-gateway.md (Medium)
 
 - "body ... payloads are never inlined" vs `MailMessage.textBody/htmlBody`
   fields (see 2.2).
@@ -360,18 +360,18 @@ addresses. Define these in the spec.
 ### 5.3 Stale companion specs (Low)
 
 - `architecture.md` still describes targets `AppCore` / `AppCLI`, which no
-  longer exist (`MailGatewayCore`, `MailGatewayReader`, etc.), and mentions
+  longer exist (`GmailGatewayCore`, `GmailGatewayReader`, etc.), and mentions
   Cask DMG releases that the macos-cask-release skill marks removed.
-- `command.md` documents `mail-gateway [--help] [--version]`: the binary name
+- `command.md` documents `gmail-gateway [--help] [--version]`: the binary name
   is wrong, `--version` is not implemented anywhere, and none of the real
   commands (`graphql`, `config validate`, `auth`, `cache prune`,
   `file download`) are documented. The real CLI surface exists only in
-  `design-mail-gateway.md` prose and `--help` text. `command.md` should become
+  `design-gmail-gateway.md` prose and `--help` text. `command.md` should become
   the authoritative CLI reference.
 
 ### 5.4 `--version` missing entirely (Low)
 
-No version flag or subcommand exists in `MailGatewayCLI`. For Homebrew-released
+No version flag or subcommand exists in `GmailGatewayCLI`. For Homebrew-released
 binaries a version identifier is expected (formula audits and user bug reports
 both need it).
 
@@ -424,8 +424,8 @@ emit clearer errors ("trailing comments are not supported").
 - `ensureUnique` on `token_store_path` protects file stores, but two
   credentials can share the same `TOKEN_STORE_JSON` env content unchecked
   (consistent with 4.4).
-- The generic catch in `MailGatewayCLI.run` maps *any* non-`MailGatewayError`
-  to `CONFIG_INVALID` (`MailGatewayCLI.swift:50-56`), mislabeling unexpected
+- The generic catch in `GmailGatewayCLI.run` maps *any* non-`GmailGatewayError`
+  to `CONFIG_INVALID` (`GmailGatewayCLI.swift:50-56`), mislabeling unexpected
   failures.
 
 ## 8. Maintainability and Testing
@@ -441,8 +441,8 @@ errors and simplify selection projection.
 
 ### 8.2 Naming and structure (Low)
 
-- `MailGatewayReaderService` also powers writes and downloads; the name
-  misleads (`MailGatewayWriteService` wraps it; `MessageFileDownloads.swift`
+- `GmailGatewayReaderService` also powers writes and downloads; the name
+  misleads (`GmailGatewayWriteService` wraps it; `MessageFileDownloads.swift`
   extends it).
 - Gmail URL construction is duplicated between reader and writer
   (`gmailURLComponents` vs inline components in `postGmailJSONObject`).
@@ -450,9 +450,9 @@ errors and simplify selection projection.
   failures use `CONFIG_INVALID` / `configurationError`
   (`MessageFileDownloads.swift:179-189,320-329`), and invalid download keys use
   `invalidCliUsage` even when reached via service APIs.
-- `Tests/AppCoreTests` path vs target name `MailGatewayCoreTests`
+- `Tests/AppCoreTests` path vs target name `GmailGatewayCoreTests`
   (`Package.swift:35-39`) is a leftover from the template rename.
-- `mail-gateway-swift-smoke-tests` is exposed as a SwiftPM *product*
+- `gmail-gateway-swift-smoke-tests` is exposed as a SwiftPM *product*
   (`Package.swift:15`); if it only exists for CI it does not need to be a
   public product that release tooling could pick up.
 
@@ -473,7 +473,7 @@ and outbound validation well. Missing coverage, in priority order:
 5. Cached-attachment prefix-collision case from 1.7.
 6. MIME construction: header folding, empty `To:`, both-bodies case.
 
-Smoke tests (`MailGatewaySwiftSmokeTests`) cover CLI flows well but run as a
+Smoke tests (`GmailGatewaySwiftSmokeTests`) cover CLI flows well but run as a
 separate executable; wiring them into `mise run test` (if not already) and CI
 matters more as the surface grows.
 
@@ -499,6 +499,6 @@ matters more as the surface grows.
 
 ## References
 
-- Primary spec: [design-mail-gateway.md](./design-mail-gateway.md)
+- Primary spec: [design-gmail-gateway.md](./design-gmail-gateway.md)
 - Credential setup: [design-gmail-credentials.md](./design-gmail-credentials.md)
 - Pending decisions raised by this review: `design-docs/user-qa/qa-implementation-review-2026-07.md`

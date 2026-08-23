@@ -1,7 +1,7 @@
 # GraphQL Yoga Migration Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-mail-gateway.md#GraphQL Design
+**Design Reference**: design-docs/specs/design-gmail-gateway.md#GraphQL Design
 **Created**: 2026-03-16
 **Last Updated**: 2026-03-16
 
@@ -9,7 +9,7 @@
 
 ## Design Document Reference
 
-**Source**: design-docs/specs/design-mail-gateway.md
+**Source**: design-docs/specs/design-gmail-gateway.md
 
 ### Summary
 

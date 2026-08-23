@@ -9,15 +9,15 @@ Use this skill for unsigned Formula releases installed as separate commands:
 
 ```bash
 brew tap user/tap
-brew install mail-gateway-reader
-brew install mail-gateway-draft
-brew install mail-gateway-sender
+brew install gmail-gateway-reader
+brew install gmail-gateway-draft
+brew install gmail-gateway-sender
 ```
 
 The signed Cask workflow is not active in this repository. Do not use or
-recreate a `mail-gateway` Cask while the install surface is split Formulae.
+recreate a `gmail-gateway` Cask while the install surface is split Formulae.
 
-Do not fall back to the old single `mail-gateway` Formula unless the user
+Do not fall back to the old single `gmail-gateway` Formula unless the user
 explicitly requests a compatibility Formula. The release target is three
 independently installable Formulae.
 
@@ -25,13 +25,13 @@ independently installable Formulae.
 
 1. Confirm `VERSION` is the intended release version.
 2. Confirm SwiftPM exposes all command products:
-   - `mail-gateway-reader`
-   - `mail-gateway-draft`
-   - `mail-gateway-sender`
+   - `gmail-gateway-reader`
+   - `gmail-gateway-draft`
+   - `gmail-gateway-sender`
 3. Confirm Nix exposes matching packages/apps for each command before release:
-   - `.#mail-gateway-reader`
-   - `.#mail-gateway-draft`
-   - `.#mail-gateway-sender`
+   - `.#gmail-gateway-reader`
+   - `.#gmail-gateway-draft`
+   - `.#gmail-gateway-sender`
 4. Build and test the Swift package.
 5. Build macOS Homebrew tarballs with `scripts/build-homebrew-release.sh`.
 6. Publish tarballs to a GitHub Release only when explicitly requested.
@@ -42,9 +42,9 @@ The default Swift formula contract is macOS-only:
 
 | Formula | Swift product | macOS Apple Silicon asset | macOS Intel asset |
 | --- | --- | --- | --- |
-| `mail-gateway-reader` | `mail-gateway-reader` | `mail-gateway-reader-<version>-darwin-arm64.tar.gz` | `mail-gateway-reader-<version>-darwin-x64.tar.gz` |
-| `mail-gateway-draft` | `mail-gateway-draft` | `mail-gateway-draft-<version>-darwin-arm64.tar.gz` | `mail-gateway-draft-<version>-darwin-x64.tar.gz` |
-| `mail-gateway-sender` | `mail-gateway-sender` | `mail-gateway-sender-<version>-darwin-arm64.tar.gz` | `mail-gateway-sender-<version>-darwin-x64.tar.gz` |
+| `gmail-gateway-reader` | `gmail-gateway-reader` | `gmail-gateway-reader-<version>-darwin-arm64.tar.gz` | `gmail-gateway-reader-<version>-darwin-x64.tar.gz` |
+| `gmail-gateway-draft` | `gmail-gateway-draft` | `gmail-gateway-draft-<version>-darwin-arm64.tar.gz` | `gmail-gateway-draft-<version>-darwin-x64.tar.gz` |
+| `gmail-gateway-sender` | `gmail-gateway-sender` | `gmail-gateway-sender-<version>-darwin-arm64.tar.gz` | `gmail-gateway-sender-<version>-darwin-x64.tar.gz` |
 
 Do not add Linux assets unless the project has a reviewed Swift Linux runtime
 contract.
@@ -53,9 +53,9 @@ Formula class names must be:
 
 | Token | Class |
 | --- | --- |
-| `mail-gateway-reader` | `MailGatewayReader` |
-| `mail-gateway-draft` | `MailGatewayDraft` |
-| `mail-gateway-sender` | `MailGatewaySender` |
+| `gmail-gateway-reader` | `GmailGatewayReader` |
+| `gmail-gateway-draft` | `GmailGatewayDraft` |
+| `gmail-gateway-sender` | `GmailGatewaySender` |
 
 ## Standard Commands
 
@@ -64,20 +64,20 @@ Build and test:
 ```bash
 mise run build
 mise run test
-swift run mail-gateway-reader --help
-swift run mail-gateway-draft --help
-swift run mail-gateway-sender --help
+swift run gmail-gateway-reader --help
+swift run gmail-gateway-draft --help
+swift run gmail-gateway-sender --help
 ```
 
 Verify Nix packages/apps:
 
 ```bash
-nix build .#mail-gateway-reader
-nix build .#mail-gateway-draft
-nix build .#mail-gateway-sender
-nix run .#mail-gateway-reader -- --help
-nix run .#mail-gateway-draft -- --help
-nix run .#mail-gateway-sender -- --help
+nix build .#gmail-gateway-reader
+nix build .#gmail-gateway-draft
+nix build .#gmail-gateway-sender
+nix run .#gmail-gateway-reader -- --help
+nix run .#gmail-gateway-draft -- --help
+nix run .#gmail-gateway-sender -- --help
 ```
 
 Build all Formula archives:
@@ -90,8 +90,8 @@ Build or render one command only if the scripts support command selection:
 
 ```bash
 version="$(tr -d '[:space:]' < VERSION)"
-mise run build:homebrew -- mail-gateway-reader darwin-arm64 darwin-x64
-mise run homebrew:formula -- "$version" mail-gateway-reader
+mise run build:homebrew -- gmail-gateway-reader darwin-arm64 darwin-x64
+mise run homebrew:formula -- "$version" gmail-gateway-reader
 ```
 
 Render formulae locally:
@@ -130,12 +130,12 @@ If publishing is explicitly requested:
 ```bash
 version="$(tr -d '[:space:]' < VERSION)"
 assets=(
-  "dist/homebrew/mail-gateway-reader-${version}-darwin-arm64.tar.gz"
-  "dist/homebrew/mail-gateway-reader-${version}-darwin-x64.tar.gz"
-  "dist/homebrew/mail-gateway-draft-${version}-darwin-arm64.tar.gz"
-  "dist/homebrew/mail-gateway-draft-${version}-darwin-x64.tar.gz"
-  "dist/homebrew/mail-gateway-sender-${version}-darwin-arm64.tar.gz"
-  "dist/homebrew/mail-gateway-sender-${version}-darwin-x64.tar.gz"
+  "dist/homebrew/gmail-gateway-reader-${version}-darwin-arm64.tar.gz"
+  "dist/homebrew/gmail-gateway-reader-${version}-darwin-x64.tar.gz"
+  "dist/homebrew/gmail-gateway-draft-${version}-darwin-arm64.tar.gz"
+  "dist/homebrew/gmail-gateway-draft-${version}-darwin-x64.tar.gz"
+  "dist/homebrew/gmail-gateway-sender-${version}-darwin-arm64.tar.gz"
+  "dist/homebrew/gmail-gateway-sender-${version}-darwin-x64.tar.gz"
 )
 for asset in "${assets[@]}"; do
   test -f "$asset"
@@ -152,21 +152,21 @@ and confirm all six command archives are present.
 From the tap checkout:
 
 ```bash
-ruby -c Formula/mail-gateway-reader.rb
-ruby -c Formula/mail-gateway-draft.rb
-ruby -c Formula/mail-gateway-sender.rb
-brew audit --strict --formula user/tap/mail-gateway-reader
-brew audit --strict --formula user/tap/mail-gateway-draft
-brew audit --strict --formula user/tap/mail-gateway-sender
-brew fetch --formula user/tap/mail-gateway-reader
-brew fetch --formula user/tap/mail-gateway-draft
-brew fetch --formula user/tap/mail-gateway-sender
-brew install user/tap/mail-gateway-reader
-brew install user/tap/mail-gateway-draft
-brew install user/tap/mail-gateway-sender
-brew test user/tap/mail-gateway-reader
-brew test user/tap/mail-gateway-draft
-brew test user/tap/mail-gateway-sender
+ruby -c Formula/gmail-gateway-reader.rb
+ruby -c Formula/gmail-gateway-draft.rb
+ruby -c Formula/gmail-gateway-sender.rb
+brew audit --strict --formula user/tap/gmail-gateway-reader
+brew audit --strict --formula user/tap/gmail-gateway-draft
+brew audit --strict --formula user/tap/gmail-gateway-sender
+brew fetch --formula user/tap/gmail-gateway-reader
+brew fetch --formula user/tap/gmail-gateway-draft
+brew fetch --formula user/tap/gmail-gateway-sender
+brew install user/tap/gmail-gateway-reader
+brew install user/tap/gmail-gateway-draft
+brew install user/tap/gmail-gateway-sender
+brew test user/tap/gmail-gateway-reader
+brew test user/tap/gmail-gateway-draft
+brew test user/tap/gmail-gateway-sender
 ```
 
 If online audit fails because of local GitHub credentials or rate limits, run a
@@ -181,8 +181,8 @@ specific Formula being checked; do not uninstall unrelated Formulae.
 
 After pushing the three Formula files, require `tacogips/homebrew-tap`'s
 `update-api-metadata.yml` workflow to succeed for that commit. Verify the
-GitHub Raw JSON for `mail-gateway-reader`, `mail-gateway-draft`, and
-`mail-gateway-sender`. Each `.versions.stable` must equal the release version,
+GitHub Raw JSON for `gmail-gateway-reader`, `gmail-gateway-draft`, and
+`gmail-gateway-sender`. Each `.versions.stable` must equal the release version,
 and each `.ruby_source_checksum.sha256` must equal the SHA-256 of its committed
 Formula. Do not consider the release complete while any endpoint is missing or
 stale.

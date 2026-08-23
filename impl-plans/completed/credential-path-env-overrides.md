@@ -1,7 +1,7 @@
 # Credential Path Env Overrides Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-mail-gateway.md#Configuration Model
+**Design Reference**: design-docs/specs/design-gmail-gateway.md#Configuration Model
 **Created**: 2026-03-15
 **Last Updated**: 2026-03-15
 
@@ -9,7 +9,7 @@
 
 ## Design Document Reference
 
-**Source**: design-docs/specs/design-mail-gateway.md
+**Source**: design-docs/specs/design-gmail-gateway.md
 
 ### Summary
 Allow Gmail credential path settings to be omitted from `config.toml` and resolved from environment variables, while preserving TOML fallback and existing multi-credential behavior.
@@ -58,7 +58,7 @@ interface CredentialConfig {
 
 ### 3. Documentation
 
-#### design-docs/specs/design-mail-gateway.md
+#### design-docs/specs/design-gmail-gateway.md
 #### design-docs/specs/design-gmail-credentials.md
 #### design-docs/specs/command.md
 

@@ -1,6 +1,6 @@
-# Gmail Credentials For Mail Gateway
+# Gmail Credentials For Gmail Gateway
 
-This document summarizes which Google credentials are required to use Gmail with this project and how they map to the mail-gateway configuration model.
+This document summarizes which Google credentials are required to use Gmail with this project and how they map to the gmail-gateway configuration model.
 
 ## Overview
 
@@ -55,8 +55,8 @@ This is the credential Google expects for a local CLI or desktop-style installed
 The downloaded JSON file from Google Cloud is the file referenced by:
 
 - `credentials[].oauth_client_secret_path`
-- `MAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_OAUTH_CLIENT_SECRET_PATH`
-- `MAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_OAUTH_CLIENT_SECRET_JSON`
+- `GMAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_OAUTH_CLIENT_SECRET_PATH`
+- `GMAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_OAUTH_CLIENT_SECRET_JSON`
 
 Despite the field name used by this repository, the file is the OAuth client JSON downloaded from Google Cloud for the Desktop app client.
 
@@ -80,8 +80,8 @@ The file should:
 After the user authorizes the app, the gateway stores token material in a local token store file referenced by:
 
 - `credentials[].token_store_path`
-- `MAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_TOKEN_STORE_PATH`
-- `MAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_TOKEN_STORE_JSON`
+- `GMAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_TOKEN_STORE_PATH`
+- `GMAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_TOKEN_STORE_JSON`
 
 This file is not created in Google Cloud. It is created locally by the application after login and typically contains:
 
@@ -153,8 +153,8 @@ Example:
 id = "gmail-personal"
 provider = "gmail"
 access_mode = "read"
-oauth_client_secret_path = "~/.config/mail-gateway/google-client.json"
-token_store_path = "~/.config/mail-gateway/tokens/personal.json"
+oauth_client_secret_path = "~/.config/gmail-gateway/google-client.json"
+token_store_path = "~/.config/gmail-gateway/tokens/personal.json"
 ```
 
 Interpretation:
@@ -163,7 +163,7 @@ Interpretation:
 - `access_mode` controls which Gmail scopes the app should request
 - `oauth_client_secret_path` points to the downloaded Desktop app OAuth client JSON when present in TOML
 - `token_store_path` points to the locally generated token store when present in TOML
-- `MAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_...` env vars may supply the same paths or JSON values without putting them in `config.toml`
+- `GMAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_...` env vars may supply the same paths or JSON values without putting them in `config.toml`
 - if both TOML and env are set, the environment variable wins
 
 ## Setup Checklist
@@ -173,11 +173,11 @@ Interpretation:
 3. Configure the OAuth consent screen
 4. Create an OAuth client with application type `Desktop app`
 5. Download the client JSON and store it locally
-6. Put the local JSON path into `credentials[].oauth_client_secret_path` or `MAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_OAUTH_CLIENT_SECRET_PATH`
+6. Put the local JSON path into `credentials[].oauth_client_secret_path` or `GMAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_OAUTH_CLIENT_SECRET_PATH`
 7. Choose `access_mode = "read"` or `access_mode = "read_send"`
-8. Set `credentials[].token_store_path` or `MAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_TOKEN_STORE_PATH` to a local writable path
-9. Run `mail-gateway-reader auth login --credential <id>`
-10. Verify the result with `mail-gateway-reader auth status --credential <id>`
+8. Set `credentials[].token_store_path` or `GMAIL_GATEWAY_CREDENTIAL_<CREDENTIAL_ID>_TOKEN_STORE_PATH` to a local writable path
+9. Run `gmail-gateway-reader auth login --credential <id>`
+10. Verify the result with `gmail-gateway-reader auth status --credential <id>`
 
 ## Notes
 

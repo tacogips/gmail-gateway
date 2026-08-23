@@ -39,27 +39,26 @@ swift build
 [tasks."run"]
 description = "Run the executable"
 run = '''
-swift run mail-gateway-reader "$@"
+swift run gmail-gateway-reader "$@"
 '''
 
 [tasks."run:reader"]
-description = "Run the read-only mail gateway"
-run = 'swift run mail-gateway-reader "$@"'
+description = "Run the read-only gmail gateway"
+run = 'swift run gmail-gateway-reader "$@"'
 
 [tasks."run:draft"]
-description = "Run the draft-capable mail gateway"
-run = 'swift run mail-gateway-draft "$@"'
+description = "Run the draft-capable gmail gateway"
+run = 'swift run gmail-gateway-draft "$@"'
 
 [tasks."run:sender"]
-description = "Run the send-capable mail gateway"
-run = 'swift run mail-gateway-sender "$@"'
+description = "Run the send-capable gmail gateway"
+run = 'swift run gmail-gateway-sender "$@"'
 
 [tasks."test"]
 description = "Run Swift tests and smoke tests"
 run = '''
 swift test
-swift build --target MailGatewaySwiftSmokeTests
-.build/debug/mail-gateway-swift-smoke-tests
+swift run gmail-gateway-swift-smoke-tests
 '''
 
 [tasks."clean"]

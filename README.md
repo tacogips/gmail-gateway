@@ -1,4 +1,4 @@
-# mail-gateway
+# gmail-gateway
 
 Swift command-line gateway for Gmail workflows
 
@@ -8,21 +8,21 @@ Swift command-line gateway for Gmail workflows
 mise install
 mise run build
 mise run test
-swift run mail-gateway-reader --help
-swift run mail-gateway-draft --help
-swift run mail-gateway-sender --help
+swift run gmail-gateway-reader --help
+swift run gmail-gateway-draft --help
+swift run gmail-gateway-sender --help
 ```
 
 The package uses Swift Package Manager with:
 
-- Library target: `MailGatewayCore`
-- Executable targets: `MailGatewayReader`, `MailGatewayDraft`, `MailGatewaySender`
-- Installed executables: `mail-gateway-reader`, `mail-gateway-draft`, `mail-gateway-sender`
+- Library target: `GmailGatewayCore`
+- Executable targets: `GmailGatewayReader`, `GmailGatewayDraft`, `GmailGatewaySender`
+- Installed executables: `gmail-gateway-reader`, `gmail-gateway-draft`, `gmail-gateway-sender`
 
 Swift target names and type names must be valid Swift identifiers. If the project
 name contains hyphens, keep `PROJECT_NAME` and `EXECUTABLE_NAME` hyphenated as
-needed, but use identifier-safe values such as `MailGatewayCore` and
-`MailGatewayReader` for Swift module/type variables.
+needed, but use identifier-safe values such as `GmailGatewayCore` and
+`GmailGatewayReader` for Swift module/type variables.
 
 ## Homebrew Formula
 
@@ -48,9 +48,9 @@ Install from the tap after the formula is published:
 
 ```bash
 brew tap tacogips/tap
-brew install mail-gateway-reader
-brew install mail-gateway-draft
-brew install mail-gateway-sender
+brew install gmail-gateway-reader
+brew install gmail-gateway-draft
+brew install gmail-gateway-sender
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.

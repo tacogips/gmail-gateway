@@ -3,37 +3,38 @@
 import PackageDescription
 
 let package = Package(
-  name: "mail-gateway",
+  name: "gmail-gateway",
   platforms: [
     .macOS(.v14)
   ],
   products: [
-    .library(name: "MailGatewayCore", targets: ["MailGatewayCore"]),
-    .executable(name: "mail-gateway-reader", targets: ["MailGatewayReader"]),
-    .executable(name: "mail-gateway-draft", targets: ["MailGatewayDraft"]),
-    .executable(name: "mail-gateway-sender", targets: ["MailGatewaySender"])
+    .library(name: "GmailGatewayCore", targets: ["GmailGatewayCore"]),
+    .executable(name: "gmail-gateway-reader", targets: ["GmailGatewayReader"]),
+    .executable(name: "gmail-gateway-draft", targets: ["GmailGatewayDraft"]),
+    .executable(name: "gmail-gateway-sender", targets: ["GmailGatewaySender"]),
+    .executable(name: "gmail-gateway-swift-smoke-tests", targets: ["GmailGatewaySwiftSmokeTests"])
   ],
   targets: [
-    .target(name: "MailGatewayCore"),
+    .target(name: "GmailGatewayCore"),
     .executableTarget(
-      name: "MailGatewayReader",
-      dependencies: ["MailGatewayCore"]
+      name: "GmailGatewayReader",
+      dependencies: ["GmailGatewayCore"]
     ),
     .executableTarget(
-      name: "MailGatewayDraft",
-      dependencies: ["MailGatewayCore"]
+      name: "GmailGatewayDraft",
+      dependencies: ["GmailGatewayCore"]
     ),
     .executableTarget(
-      name: "MailGatewaySender",
-      dependencies: ["MailGatewayCore"]
+      name: "GmailGatewaySender",
+      dependencies: ["GmailGatewayCore"]
     ),
     .executableTarget(
-      name: "MailGatewaySwiftSmokeTests",
-      dependencies: ["MailGatewayCore"]
+      name: "GmailGatewaySwiftSmokeTests",
+      dependencies: ["GmailGatewayCore"]
     ),
     .testTarget(
-      name: "MailGatewayCoreTests",
-      dependencies: ["MailGatewayCore"]
+      name: "GmailGatewayCoreTests",
+      dependencies: ["GmailGatewayCore"]
     )
   ],
   swiftLanguageModes: [.v6]

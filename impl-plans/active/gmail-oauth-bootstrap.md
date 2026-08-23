@@ -13,7 +13,7 @@
 
 ### Summary
 
-Implement the currently stubbed Gmail installed-app OAuth login path for `mail-gateway-reader auth login`, persist the resulting token store, and validate the token with the Gmail profile API.
+Implement the currently stubbed Gmail installed-app OAuth login path for `gmail-gateway-reader auth login`, persist the resulting token store, and validate the token with the Gmail profile API.
 
 ### Scope
 
@@ -26,7 +26,7 @@ Implement the currently stubbed Gmail installed-app OAuth login path for `mail-g
 
 ### 1. Gmail OAuth Bootstrap
 
-#### Sources/MailGatewayCore/GmailOAuthBootstrap.swift
+#### Sources/GmailGatewayCore/GmailOAuthBootstrap.swift
 
 **Status**: Implemented
 
@@ -55,14 +55,14 @@ struct GmailOAuthTokenStore: Codable {
 
 ### 2. CLI Integration And Tests
 
-#### Sources/MailGatewayCore/MailGatewayCore.swift
-#### Sources/MailGatewayCore/MailGatewayCLI.swift
-#### Sources/MailGatewaySwiftSmokeTests/main.swift
+#### Sources/GmailGatewayCore/GmailGatewayCore.swift
+#### Sources/GmailGatewayCore/GmailGatewayCLI.swift
+#### Sources/GmailGatewaySwiftSmokeTests/main.swift
 
 **Status**: Implemented
 
 ```swift
-public struct MailGatewayReaderService {
+public struct GmailGatewayReaderService {
     public func login(credentialId: String) throws -> [String: Any]
 }
 ```
@@ -72,7 +72,7 @@ public struct MailGatewayReaderService {
 - [x] Preserve `auth status` token inspection compatibility
 - [x] Add smoke coverage for invalid OAuth client JSON and ready token status
 - [x] Run `swift build`
-- [x] Run `swift run mail-gateway-swift-smoke-tests`
+- [x] Run `swift run gmail-gateway-swift-smoke-tests`
 
 ---
 
@@ -80,8 +80,8 @@ public struct MailGatewayReaderService {
 
 | Module | File Path | Status | Tests |
 |--------|-----------|--------|-------|
-| Gmail OAuth Bootstrap | `Sources/MailGatewayCore/GmailOAuthBootstrap.swift` | IMPLEMENTED | Build passed |
-| CLI Integration And Tests | `Sources/MailGatewayCore/MailGatewayCore.swift`, `Sources/MailGatewayCore/MailGatewayCLI.swift`, `Sources/MailGatewaySwiftSmokeTests/main.swift` | IMPLEMENTED | Smoke tests passed |
+| Gmail OAuth Bootstrap | `Sources/GmailGatewayCore/GmailOAuthBootstrap.swift` | IMPLEMENTED | Build passed |
+| CLI Integration And Tests | `Sources/GmailGatewayCore/GmailGatewayCore.swift`, `Sources/GmailGatewayCore/GmailGatewayCLI.swift`, `Sources/GmailGatewaySwiftSmokeTests/main.swift` | IMPLEMENTED | Smoke tests passed |
 
 ## Dependencies
 
@@ -96,7 +96,7 @@ public struct MailGatewayReaderService {
 
 **Status**: Implemented
 **Parallelizable**: No
-**Deliverables**: `Sources/MailGatewayCore/GmailOAuthBootstrap.swift`, `Sources/MailGatewayCore/MailGatewayCore.swift`, `Sources/MailGatewayCore/MailGatewayCLI.swift`, `Sources/MailGatewaySwiftSmokeTests/main.swift`
+**Deliverables**: `Sources/GmailGatewayCore/GmailOAuthBootstrap.swift`, `Sources/GmailGatewayCore/GmailGatewayCore.swift`, `Sources/GmailGatewayCore/GmailGatewayCLI.swift`, `Sources/GmailGatewaySwiftSmokeTests/main.swift`
 **Dependencies**: None
 
 **Description**:
@@ -127,13 +127,13 @@ Implement interactive Gmail OAuth login and validate resulting credentials throu
 ### Session: 2026-06-23 09:58
 **Tasks Completed**: TASK-001 implementation and local smoke verification
 **Tasks In Progress**: Live Gmail verification
-**Blockers**: `~/.config/mail-gateway/config.toml` is missing and `MAIL_GATEWAY_CONFIG` is unset, so no OAuth client JSON or credential id is available for live login.
-**Notes**: `swift build`, `swift run mail-gateway-swift-smoke-tests`, and `git diff --check` passed. `mail-gateway-reader config validate` confirms the default config file is missing.
+**Blockers**: `~/.config/gmail-gateway/config.toml` is missing and `GMAIL_GATEWAY_CONFIG` is unset, so no OAuth client JSON or credential id is available for live login.
+**Notes**: `swift build`, `swift run gmail-gateway-swift-smoke-tests`, and `git diff --check` passed. `gmail-gateway-reader config validate` confirms the default config file is missing.
 
 ### Session: 2026-06-23 10:57
 **Tasks Completed**: Self-review improvements and repo-level verification
 **Tasks In Progress**: Live Gmail verification
-**Blockers**: `~/.config/mail-gateway/config.toml` is still missing and `MAIL_GATEWAY_CONFIG` is unset.
+**Blockers**: `~/.config/gmail-gateway/config.toml` is still missing and `GMAIL_GATEWAY_CONFIG` is unset.
 **Notes**: Added ready-token smoke coverage and explicit GraphQL error payload type annotations. `mise run ci` and `git diff --check` passed. Temporary CLI checks verified config validation, ready auth status, invalid OAuth client login failure, and the missing default config failure.
 
 ## Related Plans

@@ -23,7 +23,7 @@ Environment:
 Examples:
   scripts/build-homebrew-release.sh darwin-arm64 darwin-x64
   scripts/render-homebrew-formula.sh 0.1.2 ../homebrew-tap/Formula
-  scripts/render-homebrew-formula.sh 0.1.2 mail-gateway-reader ../homebrew-tap/Formula
+  scripts/render-homebrew-formula.sh 0.1.2 gmail-gateway-reader ../homebrew-tap/Formula
 
 This renderer expects Swift macOS release archives. Linux archives are
 unsupported until the project defines a reviewed Swift Linux build contract.
@@ -82,7 +82,7 @@ render_formula() {
   cat > "$output" <<EOF
 class $class < Formula
   desc "$desc"
-  homepage "https://github.com/tacogips/mail-gateway"
+  homepage "https://github.com/tacogips/gmail-gateway"
   version "$version"
   license "MIT"
 
@@ -129,7 +129,7 @@ main() {
   shift
   output_dir="$repo_root/Formula"
   release_dir="${RELEASE_DIR:-$repo_root/dist/homebrew}"
-  release_base_url="${RELEASE_BASE_URL:-https://github.com/tacogips/mail-gateway/releases/download/v$version}"
+  release_base_url="${RELEASE_BASE_URL:-https://github.com/tacogips/gmail-gateway/releases/download/v$version}"
   validate_homebrew_version "$version"
   validate_release_base_url "$release_base_url"
 
@@ -147,7 +147,7 @@ main() {
       fi
       selected_products+=("$arg")
     else
-      if [[ "$arg" == mail-gateway-* ]]; then
+      if [[ "$arg" == gmail-gateway-* ]]; then
         printf 'unsupported Homebrew product: %s\n' "$arg" >&2
         printf 'supported products: %s\n' "$(homebrew_product_list)" >&2
         return 2

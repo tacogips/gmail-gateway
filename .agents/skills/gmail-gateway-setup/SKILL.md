@@ -1,6 +1,6 @@
 ---
 name: gmail-gateway-setup
-description: Configure and verify Gmail OAuth for this mail-gateway repository. Use when setting up Gmail API access, registering Google OAuth client or token JSON in kinko, validating no-config default startup, running auth login/status, using gcloud/Google Cloud Console for OAuth clients, or proving live Gmail retrieval through mail-gateway-reader.
+description: Configure and verify Gmail OAuth for this gmail-gateway repository. Use when setting up Gmail API access, registering Google OAuth client or token JSON in kinko, validating no-config default startup, running auth login/status, using gcloud/Google Cloud Console for OAuth clients, or proving live Gmail retrieval through gmail-gateway-reader.
 ---
 
 # Gmail Gateway Setup
@@ -13,20 +13,20 @@ Prefer `direnv exec .` for commands that need kinko secrets because `.envrc` run
 
 ## Defaults
 
-`~/.config/mail-gateway/config.toml` is optional. When the implicit default config is missing, the reader should synthesize:
+`~/.config/gmail-gateway/config.toml` is optional. When the implicit default config is missing, the reader should synthesize:
 
 - credential id: `gmail-personal`
 - account id: `personal`
-- OAuth client path fallback: `~/.config/mail-gateway/google-client.json`
-- token store path fallback: `~/.config/mail-gateway/tokens/gmail-personal.json`
+- OAuth client path fallback: `~/.config/gmail-gateway/google-client.json`
+- token store path fallback: `~/.config/gmail-gateway/tokens/gmail-personal.json`
 
-Explicit missing config paths via `--config` or `MAIL_GATEWAY_CONFIG` should still fail.
+Explicit missing config paths via `--config` or `GMAIL_GATEWAY_CONFIG` should still fail.
 
 Verify no-config startup:
 
 ```bash
-swift run mail-gateway-reader config validate --pretty
-swift run mail-gateway-reader auth status --credential gmail-personal --pretty
+swift run gmail-gateway-reader config validate --pretty
+swift run gmail-gateway-reader auth status --credential gmail-personal --pretty
 ```
 
 ## kinko Keys
@@ -34,17 +34,17 @@ swift run mail-gateway-reader auth status --credential gmail-personal --pretty
 Use kinko for credentials. For `gmail-personal`, the supported keys are:
 
 ```text
-MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_OAUTH_CLIENT_SECRET_PATH
-MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_TOKEN_STORE_PATH
-MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_OAUTH_CLIENT_SECRET_JSON
-MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_TOKEN_STORE_JSON
+GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_OAUTH_CLIENT_SECRET_PATH
+GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_TOKEN_STORE_PATH
+GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_OAUTH_CLIENT_SECRET_JSON
+GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_TOKEN_STORE_JSON
 ```
 
 Path keys are useful fallbacks; JSON keys avoid requiring local credential files. Never print the values. To check key presence only:
 
 ```bash
 kinko direnv export 2>/dev/null \
-  | rg 'MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_(OAUTH_CLIENT_SECRET|TOKEN_STORE)_(PATH|JSON)' \
+  | rg 'GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_(OAUTH_CLIENT_SECRET|TOKEN_STORE)_(PATH|JSON)' \
   | sed -E "s/^(export [^=]+)=.*/\1=[redacted]/"
 ```
 
@@ -53,17 +53,17 @@ To import a downloaded Google OAuth client JSON without printing it:
 ```bash
 json_file="$HOME/Downloads/client_secret_...json"
 tmp=$(mktemp)
-ruby -e 'json = File.read(ARGV[0]); escaped = json.gsub("'"'"'", "'"'"'\\'"'"''"'"'"); puts "MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_OAUTH_CLIENT_SECRET_JSON='"'"'#{escaped}'"'"'"' "$json_file" > "$tmp"
+ruby -e 'json = File.read(ARGV[0]); escaped = json.gsub("'"'"'", "'"'"'\\'"'"''"'"'"); puts "GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_OAUTH_CLIENT_SECRET_JSON='"'"'#{escaped}'"'"'"' "$json_file" > "$tmp"
 kinko import sh --file "$tmp" -y
 rm -f "$tmp"
 ```
 
-After `auth login`, register the token JSON similarly as `MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_TOKEN_STORE_JSON`.
+After `auth login`, register the token JSON similarly as `GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_TOKEN_STORE_JSON`.
 
 Verify JSON values are not shell-escaped literals:
 
 ```bash
-direnv exec . sh -c 'printf %s "$MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_OAUTH_CLIENT_SECRET_JSON" | head -c 4 | od -An -tx1'
+direnv exec . sh -c 'printf %s "$GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_OAUTH_CLIENT_SECRET_JSON" | head -c 4 | od -An -tx1'
 ```
 
 The prefix should start with `7b 22`, meaning `{ "`.
@@ -92,7 +92,7 @@ Do not accept legal/user-data policy checkboxes on the user's behalf unless the 
 Run login with kinko-loaded env:
 
 ```bash
-direnv exec . swift run mail-gateway-reader auth login --credential gmail-personal --pretty
+direnv exec . swift run gmail-gateway-reader auth login --credential gmail-personal --pretty
 ```
 
 Complete the Google OAuth consent in Brave for the signed-in account. The requested scope should be Gmail read-only.
@@ -100,17 +100,17 @@ Complete the Google OAuth consent in Brave for the signed-in account. The reques
 Verify ready auth:
 
 ```bash
-direnv exec . swift run mail-gateway-reader auth status --credential gmail-personal --pretty
+direnv exec . swift run gmail-gateway-reader auth status --credential gmail-personal --pretty
 ```
 
 For live checks, avoid dumping mail contents. Prefer count-only or cursor-only queries:
 
 ```bash
-direnv exec . swift run mail-gateway-reader graphql \
+direnv exec . swift run gmail-gateway-reader graphql \
   --query '{ threads(input: { accountId: "personal" }) { totalCount } }' \
   --pretty
 
-direnv exec . swift run mail-gateway-reader graphql \
+direnv exec . swift run gmail-gateway-reader graphql \
   --query '{ threads(input: { accountId: "personal" }) { totalCount edges { cursor } } }' \
   --pretty
 ```
@@ -118,8 +118,8 @@ direnv exec . swift run mail-gateway-reader graphql \
 If validating kinko token JSON rather than the token file, override the token path to a nonexistent value while leaving `TOKEN_STORE_JSON` loaded:
 
 ```bash
-direnv exec . env MAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_TOKEN_STORE_PATH=/tmp/mail-gateway-token-does-not-exist.json \
-  swift run mail-gateway-reader graphql \
+direnv exec . env GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_TOKEN_STORE_PATH=/tmp/gmail-gateway-token-does-not-exist.json \
+  swift run gmail-gateway-reader graphql \
   --query '{ threads(input: { accountId: "personal" }) { totalCount } }' \
   --pretty
 ```
@@ -130,7 +130,7 @@ Before handoff, run:
 
 ```bash
 swift build
-swift run mail-gateway-swift-smoke-tests
+swift run gmail-gateway-swift-smoke-tests
 mise run ci
 git diff --check
 ```

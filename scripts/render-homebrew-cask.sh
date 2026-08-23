@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 artifact_name=""
-product="mail-gateway-reader"
+product="gmail-gateway-reader"
 
 usage() {
   cat <<EOF
@@ -55,7 +55,7 @@ main() {
   version="$1"
   output="${2:-$repo_root/Casks/$artifact_name.rb}"
   release_dir="${CASK_RELEASE_DIR:-$repo_root/dist/homebrew-cask}"
-  release_base_url="${CASK_RELEASE_BASE_URL:-https://github.com/tacogips/mail-gateway/releases/download/v$version}"
+  release_base_url="${CASK_RELEASE_BASE_URL:-https://github.com/tacogips/gmail-gateway/releases/download/v$version}"
 
   local darwin_arm64_sha darwin_x64_sha
   darwin_arm64_sha="$(sha_for_target "$version" darwin-arm64 "$release_dir")"
@@ -71,10 +71,10 @@ cask "" do
          intel: "$darwin_x64_sha"
 
   url "$release_base_url/$artifact_name-#{version}-#{arch}.dmg",
-      verified: "github.com/tacogips/mail-gateway/releases/download/"
-  name "mail-gateway"
+      verified: "github.com/tacogips/gmail-gateway/releases/download/"
+  name "gmail-gateway"
   desc "Swift command-line gateway for Gmail workflows"
-  homepage "https://github.com/tacogips/mail-gateway"
+  homepage "https://github.com/tacogips/gmail-gateway"
 
   livecheck do
     url :url
