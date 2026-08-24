@@ -479,7 +479,9 @@ private func buildMailMessage(account: AccountConfig, object: [String: Any]) -> 
             partId: nil,
             labelIds: labelIds,
             historyId: object["historyId"] as? String
-        ))
+        )),
+        rfc822MessageId: nonBlank(headers["message-id"]),
+        referencesHeader: nonBlank(headers["references"])
     )
 }
 
@@ -516,7 +518,9 @@ private func buildMailMessage(account: AccountConfig, object: GmailAPIMessage) -
             partId: nil,
             labelIds: labelIds,
             historyId: object.historyId
-        ))
+        )),
+        rfc822MessageId: nonBlank(headers["message-id"]),
+        referencesHeader: nonBlank(headers["references"])
     )
 }
 

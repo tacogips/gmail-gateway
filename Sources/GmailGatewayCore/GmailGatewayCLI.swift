@@ -337,10 +337,12 @@ private func rootHelpText(mode: GmailGatewayCLIMode) -> String {
     case .draftGateway:
         writeNote = """
           This binary is draft-first. sendMessage creates a provider draft and does not directly send mail.
+          replyMessage and forwardMessage create threaded reply and forward drafts.
         """
     case .directSender:
         writeNote = """
           This binary is the explicit sender. sendMessage directly sends mail through the provider, and createDraft creates a provider draft.
+          replyMessage and forwardMessage directly send threaded replies and forwards.
         """
     }
 

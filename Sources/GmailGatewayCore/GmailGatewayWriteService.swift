@@ -23,6 +23,18 @@ public enum GmailGatewayWriteMode: Sendable {
     }
 }
 
+public struct OutboundInlineAttachment: Sendable {
+    public let filename: String
+    public let mimeType: String
+    public let data: Data
+
+    public init(filename: String, mimeType: String, data: Data) {
+        self.filename = filename
+        self.mimeType = mimeType
+        self.data = data
+    }
+}
+
 public struct OutboundMailInput: Sendable {
     public let accountId: String
     public let to: [String]
@@ -33,6 +45,10 @@ public struct OutboundMailInput: Sendable {
     public let textBody: String?
     public let htmlBody: String?
     public let attachmentPaths: [String]
+    public let threadId: String?
+    public let inReplyTo: String?
+    public let references: String?
+    public let inlineAttachments: [OutboundInlineAttachment]
 
     public init(
         accountId: String,
@@ -43,7 +59,11 @@ public struct OutboundMailInput: Sendable {
         subject: String? = nil,
         textBody: String? = nil,
         htmlBody: String? = nil,
-        attachmentPaths: [String] = []
+        attachmentPaths: [String] = [],
+        threadId: String? = nil,
+        inReplyTo: String? = nil,
+        references: String? = nil,
+        inlineAttachments: [OutboundInlineAttachment] = []
     ) {
         self.accountId = accountId
         self.to = to
@@ -54,12 +74,16 @@ public struct OutboundMailInput: Sendable {
         self.textBody = textBody
         self.htmlBody = htmlBody
         self.attachmentPaths = attachmentPaths
+        self.threadId = threadId
+        self.inReplyTo = inReplyTo
+        self.references = references
+        self.inlineAttachments = inlineAttachments
     }
 }
 
 public struct GmailGatewayWriteService {
-    private let readerService: GmailGatewayService
-    private let providerAdapter: MailProviderAdapter
+    let readerService: GmailGatewayService
+    let providerAdapter: MailProviderAdapter
 
     public init(config: GmailGatewayConfig) {
         self.init(config: config, providerAdapter: GmailProviderAdapter())
@@ -70,8 +94,11 @@ public struct GmailGatewayWriteService {
         self.providerAdapter = providerAdapter
     }
 
-    public func sendMessage(input: OutboundMailInput, mode: GmailGatewayWriteMode) throws -> [String: Any] {
-        let account = try readerService.requireAccount(input.accountId)
+    func requireWritableAccount(
+        accountId: String,
+        mode: GmailGatewayWriteMode
+    ) throws -> (account: AccountConfig, credential: CredentialConfig) {
+        let account = try readerService.requireAccount(accountId)
         let credential = try readerService.requireCredential(account.credentialId)
         guard !account.isFallback else {
             throw GmailGatewayError(
@@ -88,6 +115,11 @@ public struct GmailGatewayWriteService {
             )
         }
         try validateAuthenticatedSenderIdentity(account: account, credential: credential)
+        return (account, credential)
+    }
+
+    public func sendMessage(input: OutboundMailInput, mode: GmailGatewayWriteMode) throws -> [String: Any] {
+        let (account, credential) = try requireWritableAccount(accountId: input.accountId, mode: mode)
         try validateOutboundInput(input, account: account)
         let attachments = validateOutboundAttachmentPaths(input.attachmentPaths, readerService: readerService)
 
@@ -195,7 +227,8 @@ private func validateOutboundInput(_ input: OutboundMailInput, account: AccountC
             exitCode: .graphqlExecutionError
         )
     }
-    let headerValues = [account.emailAddress] + recipients + [input.subject, input.replyTo].compactMap { $0 }
+    let headerValues = [account.emailAddress] + recipients
+        + [input.subject, input.replyTo, input.inReplyTo, input.references].compactMap { $0 }
     try headerValues.forEach { value in
         if value.contains("\r") || value.contains("\n") {
             throw GmailGatewayError(

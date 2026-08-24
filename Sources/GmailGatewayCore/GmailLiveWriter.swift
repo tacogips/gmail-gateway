@@ -19,10 +19,14 @@ struct GmailLiveWriter {
             input: input,
             attachmentPaths: validatedAttachmentPaths
         )
+        var draftMessage: [String: Any] = ["raw": rawMessage]
+        if let threadId = nonBlank(input.threadId) {
+            draftMessage["threadId"] = threadId
+        }
         let object = try postGmailJSONObject(
             path: "/gmail/v1/users/me/drafts",
             accessToken: accessToken,
-            body: ["message": ["raw": rawMessage]],
+            body: ["message": draftMessage],
             context: "Gmail draft creation failed"
         )
         let message = object["message"] as? [String: Any] ?? [:]
@@ -51,10 +55,14 @@ struct GmailLiveWriter {
             input: input,
             attachmentPaths: validatedAttachmentPaths
         )
+        var sendBody: [String: Any] = ["raw": rawMessage]
+        if let threadId = nonBlank(input.threadId) {
+            sendBody["threadId"] = threadId
+        }
         let object = try postGmailJSONObject(
             path: "/gmail/v1/users/me/messages/send",
             accessToken: accessToken,
-            body: ["raw": rawMessage],
+            body: sendBody,
             context: "Gmail message send failed"
         )
         return MailWriteResult(
@@ -120,10 +128,16 @@ func buildRawMessage(from: String, input: OutboundMailInput, attachmentPaths: [S
     if let subject = input.subject {
         headers.append("Subject: \(mimeHeaderValue(subject))")
     }
+    if let inReplyTo = nonBlank(input.inReplyTo) {
+        headers.append("In-Reply-To: \(inReplyTo)")
+    }
+    if let references = nonBlank(input.references) {
+        headers.append("References: \(references)")
+    }
     headers.append("MIME-Version: 1.0")
 
     let body: String
-    if attachmentPaths.isEmpty {
+    if attachmentPaths.isEmpty && input.inlineAttachments.isEmpty {
         body = simpleBody(input: input, headers: &headers)
     } else {
         body = try multipartBody(input: input, headers: &headers, attachmentPaths: attachmentPaths)
@@ -197,18 +211,34 @@ private func multipartBody(input: OutboundMailInput, headers: inout [String], at
     for path in attachmentPaths {
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
         let filename = sanitizedFilename(path)
-        let contentType = attachmentContentType(for: filename)
-        parts.append([
-            "--\(boundary)",
-            "Content-Type: \(contentType); name=\"\(filename)\"",
-            "Content-Disposition: attachment; filename=\"\(filename)\"",
-            "Content-Transfer-Encoding: base64",
-            "",
-            wrappedBase64(data)
-        ].joined(separator: "\r\n"))
+        parts.append(attachmentPart(
+            boundary: boundary,
+            filename: filename,
+            contentType: attachmentContentType(for: filename),
+            data: data
+        ))
+    }
+    for inlineAttachment in input.inlineAttachments {
+        parts.append(attachmentPart(
+            boundary: boundary,
+            filename: sanitizedFilename(inlineAttachment.filename),
+            contentType: inlineAttachment.mimeType,
+            data: inlineAttachment.data
+        ))
     }
     parts.append("--\(boundary)--")
     return parts.joined(separator: "\r\n")
+}
+
+private func attachmentPart(boundary: String, filename: String, contentType: String, data: Data) -> String {
+    [
+        "--\(boundary)",
+        "Content-Type: \(contentType); name=\"\(filename)\"",
+        "Content-Disposition: attachment; filename=\"\(filename)\"",
+        "Content-Transfer-Encoding: base64",
+        "",
+        wrappedBase64(data)
+    ].joined(separator: "\r\n")
 }
 
 private func attachmentContentType(for filename: String) -> String {

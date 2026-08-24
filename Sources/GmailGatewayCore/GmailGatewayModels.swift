@@ -78,6 +78,8 @@ struct MailMessage: Codable {
     let labels: [String]
     let historyId: String?
     let providerMetadata: MailProviderMetadata?
+    let rfc822MessageId: String?
+    let referencesHeader: String?
 
     func graphQLObject() -> [String: Any] {
         [

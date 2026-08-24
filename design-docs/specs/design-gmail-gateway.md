@@ -34,7 +34,7 @@ All business operations are exposed through GraphQL. The CLI surface exists only
 - Support inline attachment payloads in GraphQL responses
 - Synchronize an entire mailbox into a local database in v1
 - Ship long-running `serve` mode in Phase 1
-- Ship reply or forward workflows in the first write implementation
+- Build a generic conversation UI on top of reply/forward threading
 
 ## Product Surface
 
@@ -184,8 +184,42 @@ Phase 2 adds:
 type Mutation {
   createDraft(input: SendMessageInput!): SendMessagePayload!
   sendMessage(input: SendMessageInput!): SendMessagePayload!
+  replyMessage(input: ReplyMessageInput!): SendMessagePayload!
+  forwardMessage(input: ForwardMessageInput!): SendMessagePayload!
+}
+
+input ReplyMessageInput {
+  accountId: ID!
+  messageId: ID!
+  to: [String!]          # defaults to the original Reply-To (or From) when omitted
+  cc: [String!]          # with replyAll and no explicit cc, defaults to original to+cc minus self
+  bcc: [String!]
+  replyAll: Boolean = false
+  textBody: String
+  htmlBody: String
+  attachmentPaths: [String!]
+}
+
+input ForwardMessageInput {
+  accountId: ID!
+  messageId: ID!
+  to: [String!]!
+  cc: [String!]
+  bcc: [String!]
+  textBody: String       # optional note placed above the forwarded quote
+  htmlBody: String
+  includeAttachments: Boolean = true
+  attachmentPaths: [String!]
 }
 ```
+
+`replyMessage` and `forwardMessage` follow the binary write mode: the draft
+binary creates threaded drafts, the sender binary sends directly. Replies set
+`In-Reply-To`, `References`, the provider `threadId`, and a `Re:` subject
+derived from the original message. Forwards quote the original body under a
+`---------- Forwarded message ----------` header block, use a `Fwd:` subject,
+carry the original attachments when `includeAttachments` is true, and stay on
+the original provider thread via `threadId` and `References`.
 
 ### Search Input Model
 
@@ -400,7 +434,9 @@ The shared input fields are:
 - header fields (`to`, `cc`, `bcc`, `subject`, `replyTo`)
 - body variants (`textBody`, `htmlBody`)
 - attachments by validated local file path
-- no reply or forward workflow in the first write implementation
+
+Reply and forward workflows are provided by the dedicated `replyMessage` and
+`forwardMessage` mutations described above rather than by `SendMessageInput`.
 
 `gmail-gateway-draft` `sendMessage` and `gmail-gateway-sender` `createDraft` return:
 
@@ -588,7 +624,6 @@ Adding a new provider should usually require:
 ### Phase 3
 
 - provider abstraction hardening for non-Gmail adapters
-- reply threading support
 - optional metadata cache for incremental sync or faster repeated lookups
 
 ## References

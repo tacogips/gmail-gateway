@@ -13,8 +13,10 @@ func executeReaderGraphQL(
     }
 }
 
+private let writeMutationRootFields = ["sendMessage", "createDraft", "replyMessage", "forwardMessage"]
+
 private func executeReaderGraphQLData(service: GmailGatewayService, query: String) throws -> [String: Any] {
-    if rootFieldSource("sendMessage", in: query) != nil || rootFieldSource("createDraft", in: query) != nil {
+    if writeMutationRootFields.contains(where: { rootFieldSource($0, in: query) != nil }) {
         throw GmailGatewayError(
             "Mail write mutations are disabled in gmail-gateway-reader",
             code: .sendDisabledInReader,
@@ -107,6 +109,32 @@ public func executeWriteGraphQL(
                     "data": [
                         "sendMessage": try GmailGatewayWriteService(config: config).sendMessage(
                             input: try outboundMailInput(from: source),
+                            mode: mode
+                        )
+                    ]
+                ],
+                .success
+            )
+        }
+        if let source = rootFieldSource("replyMessage", in: scannedQuery) {
+            return (
+                [
+                    "data": [
+                        "replyMessage": try GmailGatewayWriteService(config: config).replyMessage(
+                            input: try replyMessageInput(from: source),
+                            mode: mode
+                        )
+                    ]
+                ],
+                .success
+            )
+        }
+        if let source = rootFieldSource("forwardMessage", in: scannedQuery) {
+            return (
+                [
+                    "data": [
+                        "forwardMessage": try GmailGatewayWriteService(config: config).forwardMessage(
+                            input: try forwardMessageInput(from: source),
                             mode: mode
                         )
                     ]
@@ -566,6 +594,34 @@ private func outboundMailInput(from query: String) throws -> OutboundMailInput {
         subject: try extractOptionalStringArgument("subject", from: query),
         textBody: try extractOptionalStringArgument("textBody", from: query),
         htmlBody: try extractOptionalStringArgument("htmlBody", from: query),
+        attachmentPaths: try extractOptionalStringArrayArgument("attachmentPaths", from: query) ?? []
+    )
+}
+
+private func replyMessageInput(from query: String) throws -> ReplyMessageInput {
+    ReplyMessageInput(
+        accountId: try extractStringArgument("accountId", from: query),
+        messageId: try extractStringArgument("messageId", from: query),
+        to: try extractOptionalStringArrayArgument("to", from: query) ?? [],
+        cc: try extractOptionalStringArrayArgument("cc", from: query) ?? [],
+        bcc: try extractOptionalStringArrayArgument("bcc", from: query) ?? [],
+        replyAll: try extractOptionalBooleanArgument("replyAll", from: query) ?? false,
+        textBody: try extractOptionalStringArgument("textBody", from: query),
+        htmlBody: try extractOptionalStringArgument("htmlBody", from: query),
+        attachmentPaths: try extractOptionalStringArrayArgument("attachmentPaths", from: query) ?? []
+    )
+}
+
+private func forwardMessageInput(from query: String) throws -> ForwardMessageInput {
+    ForwardMessageInput(
+        accountId: try extractStringArgument("accountId", from: query),
+        messageId: try extractStringArgument("messageId", from: query),
+        to: try extractOptionalStringArrayArgument("to", from: query) ?? [],
+        cc: try extractOptionalStringArrayArgument("cc", from: query) ?? [],
+        bcc: try extractOptionalStringArrayArgument("bcc", from: query) ?? [],
+        textBody: try extractOptionalStringArgument("textBody", from: query),
+        htmlBody: try extractOptionalStringArgument("htmlBody", from: query),
+        includeAttachments: try extractOptionalBooleanArgument("includeAttachments", from: query) ?? true,
         attachmentPaths: try extractOptionalStringArrayArgument("attachmentPaths", from: query) ?? []
     )
 }

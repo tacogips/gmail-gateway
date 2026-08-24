@@ -22,7 +22,7 @@ import Testing
 }
 
 @Test func versionFlagReturnsVersionForAllBinaries() {
-    let expected = "0.1.6\n"
+    let expected = "0.1.7\n"
 
     #expect(GmailGatewayCLI().run(arguments: ["--version"], environment: [:]).stdout == expected)
     #expect(GmailGatewayCLI(mode: .draftGateway).run(arguments: ["--version"], environment: [:]).stdout == expected)
