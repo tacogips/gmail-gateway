@@ -48,6 +48,28 @@ public enum GmailGatewayConfigLoader {
         return normalized.isEmpty ? "CREDENTIAL" : normalized
     }
 
+    /// Default directory for persisted OAuth token stores. Tokens are auth
+    /// state, not configuration, so the default lives under XDG_STATE_HOME
+    /// (~/.local/state), never ~/.config. GMAIL_GATEWAY_CREDENTIAL_DIR
+    /// relocates the directory; a per-credential *_TOKEN_STORE_PATH still
+    /// wins for one file.
+    public static func resolveDefaultCredentialDirectory(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        if let credentialDir = nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) {
+            return normalizedPath(credentialDir)
+        }
+        let stateRoot = nonBlank(environment["XDG_STATE_HOME"])
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".local")
+                .appendingPathComponent("state")
+                .path
+        return normalizedPath(URL(fileURLWithPath: stateRoot)
+            .appendingPathComponent("gmail-gateway")
+            .appendingPathComponent("credentials")
+            .path)
+    }
+
     public static func resolveDefaultConfigPath(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String {
@@ -181,7 +203,9 @@ public enum GmailGatewayConfigLoader {
                 configPath: configPath,
                 credentialId: defaultCredentialId,
                 pathKey: "token_store_path",
-                configValue: "tokens/\(defaultCredentialId).json",
+                configValue: URL(fileURLWithPath: resolveDefaultCredentialDirectory(environment: environment))
+                    .appendingPathComponent("\(defaultCredentialId).json")
+                    .path,
                 environment: environment,
                 context: "credentials.\(defaultCredentialId).token_store_path"
             )),
@@ -546,8 +570,11 @@ private func resolveCredentialPath(_ request: CredentialPathRequest) throws -> S
 }
 
 private func resolveConfigRelativePath(configPath: String, rawPath: String) throws -> String {
-    if rawPath.hasPrefix("/") {
-        return normalizedPath(rawPath)
+    // Expanding first lets config values use "~/..." as an absolute home path
+    // instead of being misread as a config-directory-relative segment.
+    let expanded = normalizedPath(rawPath)
+    if expanded.hasPrefix("/") {
+        return expanded
     }
     let configDirectory = URL(fileURLWithPath: configPath).deletingLastPathComponent()
     return normalizedPath(configDirectory.appendingPathComponent(rawPath).path)
