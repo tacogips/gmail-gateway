@@ -1,25 +1,67 @@
 import Foundation
 
-public enum GmailGatewayWriteMode: Sendable {
-    case draftDefault
-    case directSend
+public enum GmailGatewayWriteOperation: String, Sendable {
+    case createDraft = "CREATE_DRAFT"
+    case updateDraft = "UPDATE_DRAFT"
+    case deleteDraft = "DELETE_DRAFT"
+    case readDraft = "READ_DRAFT"
+    case send = "SEND"
 
-    var operationValue: String {
+    var isDraftOperation: Bool {
         switch self {
-        case .draftDefault:
-            return "CREATE_DRAFT"
-        case .directSend:
-            return "SEND"
+        case .createDraft, .updateDraft, .deleteDraft, .readDraft:
+            return true
+        case .send:
+            return false
+        }
+    }
+
+    var mutationName: String {
+        switch self {
+        case .createDraft:
+            return "createDraft"
+        case .updateDraft:
+            return "updateDraft"
+        case .deleteDraft:
+            return "deleteDraft"
+        case .readDraft:
+            return "draft"
+        case .send:
+            return "sendMessage"
         }
     }
 
     var authContext: String {
         switch self {
-        case .draftDefault:
+        case .createDraft:
             return "creating Gmail drafts"
-        case .directSend:
+        case .updateDraft:
+            return "updating Gmail drafts"
+        case .deleteDraft:
+            return "deleting Gmail drafts"
+        case .readDraft:
+            return "reading Gmail drafts"
+        case .send:
             return "sending Gmail messages"
         }
+    }
+}
+
+public enum GmailGatewayWriteMode: Sendable {
+    case draftDefault
+    case directSend
+
+    var operation: GmailGatewayWriteOperation {
+        switch self {
+        case .draftDefault:
+            return .createDraft
+        case .directSend:
+            return .send
+        }
+    }
+
+    var operationValue: String {
+        operation.rawValue
     }
 }
 
@@ -79,6 +121,24 @@ public struct OutboundMailInput: Sendable {
         self.references = references
         self.inlineAttachments = inlineAttachments
     }
+
+    func replacingInlineAttachments(_ inlineAttachments: [OutboundInlineAttachment]) -> OutboundMailInput {
+        OutboundMailInput(
+            accountId: accountId,
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            replyTo: replyTo,
+            subject: subject,
+            textBody: textBody,
+            htmlBody: htmlBody,
+            attachmentPaths: attachmentPaths,
+            threadId: threadId,
+            inReplyTo: inReplyTo,
+            references: references,
+            inlineAttachments: inlineAttachments
+        )
+    }
 }
 
 public struct GmailGatewayWriteService {
@@ -96,7 +156,7 @@ public struct GmailGatewayWriteService {
 
     func requireWritableAccount(
         accountId: String,
-        mode: GmailGatewayWriteMode
+        operation: GmailGatewayWriteOperation
     ) throws -> (account: AccountConfig, credential: CredentialConfig) {
         let account = try readerService.requireAccount(accountId)
         let credential = try readerService.requireCredential(account.credentialId)
@@ -109,7 +169,7 @@ public struct GmailGatewayWriteService {
         }
         guard credential.accessMode == .readSend else {
             throw GmailGatewayError(
-                "Credential \(credential.id) must use read_send access mode before \(mode.authContext)",
+                "Credential \(credential.id) must use read_send access mode before \(operation.authContext)",
                 code: .sendNotSupported,
                 exitCode: .graphqlExecutionError
             )
@@ -119,8 +179,8 @@ public struct GmailGatewayWriteService {
     }
 
     public func sendMessage(input: OutboundMailInput, mode: GmailGatewayWriteMode) throws -> [String: Any] {
-        let (account, credential) = try requireWritableAccount(accountId: input.accountId, mode: mode)
-        try validateOutboundInput(input, account: account)
+        let (account, credential) = try requireWritableAccount(accountId: input.accountId, operation: mode.operation)
+        try validateOutboundInput(input, account: account, operation: mode.operation)
         let attachments = validateOutboundAttachmentPaths(input.attachmentPaths, readerService: readerService)
 
         switch mode {
@@ -144,12 +204,12 @@ public struct GmailGatewayWriteService {
     }
 }
 
-private struct OutboundAttachmentValidation {
+struct OutboundAttachmentValidation {
     let acceptedPaths: [String]
     let rejectedAttachments: [MailRejectedAttachment]
 }
 
-private func validateOutboundAttachmentPaths(
+func validateOutboundAttachmentPaths(
     _ paths: [String],
     readerService: GmailGatewayService
 ) -> OutboundAttachmentValidation {
@@ -204,25 +264,29 @@ private func validateAuthenticatedSenderIdentity(account: AccountConfig, credent
     }
 }
 
-private func validateOutboundInput(_ input: OutboundMailInput, account: AccountConfig) throws {
+func validateOutboundInput(
+    _ input: OutboundMailInput,
+    account: AccountConfig,
+    operation: GmailGatewayWriteOperation
+) throws {
     let recipients = input.to + input.cc + input.bcc
     if recipients.isEmpty {
         throw GmailGatewayError(
-            "sendMessage requires at least one to, cc, or bcc recipient",
+            "\(operation.mutationName) requires at least one to, cc, or bcc recipient",
             code: .invalidArgument,
             exitCode: .graphqlExecutionError
         )
     }
     if recipients.contains(where: { nonBlank($0) == nil }) {
         throw GmailGatewayError(
-            "sendMessage recipient values must not be blank",
+            "\(operation.mutationName) recipient values must not be blank",
             code: .invalidArgument,
             exitCode: .graphqlExecutionError
         )
     }
     if nonBlank(input.textBody) == nil && nonBlank(input.htmlBody) == nil {
         throw GmailGatewayError(
-            "sendMessage requires textBody or htmlBody",
+            "\(operation.mutationName) requires textBody or htmlBody",
             code: .invalidArgument,
             exitCode: .graphqlExecutionError
         )
@@ -232,7 +296,7 @@ private func validateOutboundInput(_ input: OutboundMailInput, account: AccountC
     try headerValues.forEach { value in
         if value.contains("\r") || value.contains("\n") {
             throw GmailGatewayError(
-                "sendMessage header values must not contain line breaks",
+                "\(operation.mutationName) header values must not contain line breaks",
                 code: .invalidArgument,
                 exitCode: .graphqlExecutionError
             )

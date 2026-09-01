@@ -78,37 +78,6 @@ struct GmailLiveWriter {
     }
 }
 
-private func postGmailJSONObject(
-    path: String,
-    accessToken: String,
-    body: [String: Any],
-    context: String
-) throws -> [String: Any] {
-    let components = gmailURLComponents(path: path)
-    guard let url = components.url else {
-        throw GmailGatewayError(
-            "Failed to construct Gmail API URL",
-            code: .providerApiError,
-            exitCode: .providerApiError
-        )
-    }
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.timeoutInterval = 30
-    request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
-    let response = try performGmailHTTPRequest(request, context: context)
-    guard let object = try JSONSerialization.jsonObject(with: response.data) as? [String: Any] else {
-        throw GmailGatewayError(
-            "Gmail API response was not a JSON object",
-            code: .providerApiError,
-            exitCode: .providerApiError
-        )
-    }
-    return object
-}
-
 func buildRawMessage(from: String, input: OutboundMailInput, attachmentPaths: [String]) throws -> String {
     var headers: [String] = [
         "From: \(from)"

@@ -336,13 +336,23 @@ private func rootHelpText(mode: GmailGatewayCLIMode) -> String {
         """
     case .draftGateway:
         writeNote = """
-          This binary is draft-first. sendMessage creates a provider draft and does not directly send mail.
-          replyMessage and forwardMessage create threaded reply and forward drafts.
+          This binary is draft-only. It supports the createDraft, updateDraft, and deleteDraft
+          mutations plus the drafts and draft queries, and it can never send mail.
+          sendMessage, replyMessage, and forwardMessage are rejected with
+          SEND_DISABLED_IN_DRAFT_GATEWAY; use gmail-gateway-sender for those.
+
+          updateDraft retains any header or body field it is not given. Supplying textBody
+          and/or htmlBody replaces the whole body with exactly what was supplied. Attachments
+          already on the draft are all retained unless keepAttachmentIds is given, in which case
+          only the listed provider attachment ids survive; attachmentPaths adds local files on
+          top, so keepAttachmentIds: [] with attachmentPaths replaces every attachment.
         """
     case .directSender:
         writeNote = """
-          This binary is the explicit sender. sendMessage directly sends mail through the provider, and createDraft creates a provider draft.
+          This binary is the explicit sender. sendMessage directly sends mail through the provider.
           replyMessage and forwardMessage directly send threaded replies and forwards.
+          It also supports the full draft surface: createDraft, updateDraft, deleteDraft,
+          and the drafts and draft queries.
         """
     }
 

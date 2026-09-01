@@ -10,8 +10,8 @@ Phase 1 ships one Swift Package Manager binary:
 
 Phase 2 adds:
 
-- `gmail-gateway-draft`: read access plus default outbound draft creation
-- `gmail-gateway-sender`: explicit direct-send access to configured mail accounts, including draft creation
+- `gmail-gateway-draft`: read access plus the outbound draft lifecycle (create, update, delete, read); it can never send mail
+- `gmail-gateway-sender`: explicit direct-send access to configured mail accounts, including the draft lifecycle
 
 All business operations are exposed through GraphQL. The CLI surface exists only for bootstrapping, configuration validation, authentication setup, cache maintenance, and GraphQL transport.
 
@@ -43,8 +43,8 @@ All business operations are exposed through GraphQL. The CLI surface exists only
 | Binary | Read Mail | Send Mail | GraphQL Schema |
 |--------|-----------|-----------|----------------|
 | `gmail-gateway-reader` | Yes | No | `Query` only, plus local-cache side effects such as attachment materialization |
-| `gmail-gateway-draft` | Planned for Phase 2 | Draft only by default | `Query` and draft-backed `Mutation` |
-| `gmail-gateway-sender` | Planned for Phase 2 | Yes, explicit direct send and draft creation | `Query`, direct-send `Mutation`, and draft `Mutation` |
+| `gmail-gateway-draft` | Planned for Phase 2 | No, never | `Query`, draft `Query` (`drafts`, `draft`), and the draft lifecycle `Mutation` (`createDraft`, `updateDraft`, `deleteDraft`) |
+| `gmail-gateway-sender` | Planned for Phase 2 | Yes, explicit direct send | `Query`, draft `Query`, direct-send `Mutation`, and the draft lifecycle `Mutation` |
 
 `gmail-gateway-reader` must fail fast if a send mutation is submitted. The current CLI GraphQL executor enforces this by rejecting write root fields before resolver dispatch with `SEND_DISABLED_IN_READER`; it does not yet expose a separate reduced GraphQL schema.
 
@@ -150,8 +150,10 @@ default_label_ids = ["INBOX", "IMPORTANT"]
 - GraphQL is the only business API surface
 - account selection is always explicit in message and thread queries
 - provider-specific details are exposed in a namespaced way only when the canonical model is insufficient
-- draft creation exists in `gmail-gateway-draft`
-- direct send operations exist only in `gmail-gateway-sender`
+- the full draft lifecycle (create, update, delete, read) exists in `gmail-gateway-draft`
+- send operations (`sendMessage`, `replyMessage`, `forwardMessage`) exist only in
+  `gmail-gateway-sender`; `gmail-gateway-draft` rejects them with
+  `SEND_DISABLED_IN_DRAFT_GATEWAY`
 - filesystem materialization paths are returned only by explicit gateway
   download commands, not by GraphQL message or file metadata
 - nested thread and message queries return metadata only; payload retrieval is
@@ -183,9 +185,30 @@ Phase 2 adds:
 ```graphql
 type Mutation {
   createDraft(input: SendMessageInput!): SendMessagePayload!
+  updateDraft(input: UpdateDraftInput!): SendMessagePayload!
+  deleteDraft(input: DeleteDraftInput!): SendMessagePayload!
   sendMessage(input: SendMessageInput!): SendMessagePayload!
   replyMessage(input: ReplyMessageInput!): SendMessagePayload!
   forwardMessage(input: ForwardMessageInput!): SendMessagePayload!
+}
+
+input UpdateDraftInput {
+  accountId: ID!
+  draftId: ID!
+  to: [String!]            # omitted fields keep the value already on the draft
+  cc: [String!]
+  bcc: [String!]
+  replyTo: String
+  subject: String
+  textBody: String         # supplying textBody and/or htmlBody replaces the whole body
+  htmlBody: String
+  attachmentPaths: [String!]   # local files added on top of retained attachments
+  keepAttachmentIds: [String!] # omitted keeps all; [] drops all; listed ids are retained
+}
+
+input DeleteDraftInput {
+  accountId: ID!
+  draftId: ID!
 }
 
 input ReplyMessageInput {
@@ -213,13 +236,34 @@ input ForwardMessageInput {
 }
 ```
 
-`replyMessage` and `forwardMessage` follow the binary write mode: the draft
-binary creates threaded drafts, the sender binary sends directly. Replies set
+`replyMessage` and `forwardMessage` are sender-only mutations that send directly.
+The draft binary has no send path at all and rejects them before any provider
+call. Replies set
 `In-Reply-To`, `References`, the provider `threadId`, and a `Re:` subject
 derived from the original message. Forwards quote the original body under a
 `---------- Forwarded message ----------` header block, use a `Fwd:` subject,
 carry the original attachments when `includeAttachments` is true, and stay on
 the original provider thread via `threadId` and `References`.
+
+Draft reads are part of the same surface and are available in
+`gmail-gateway-draft` and `gmail-gateway-sender` only:
+
+```graphql
+type DraftQuery {
+  drafts(accountId: ID!, first: Int = 20, after: String): MailDraftConnection!
+  draft(accountId: ID!, draftId: ID!): MailDraft
+}
+
+type MailDraft {
+  id: ID!
+  accountId: ID!
+  message: MailMessage
+}
+```
+
+`draft` is what supplies the provider attachment ids that `updateDraft`
+`keepAttachmentIds` refers to. `gmail-gateway-reader` rejects both draft queries
+with `SEND_DISABLED_IN_READER` because the reader schema has no draft surface.
 
 ### Search Input Model
 
@@ -422,11 +466,34 @@ GraphQL responses use the upper-case enum values shown above.
 
 ### Outbound Mutation Semantics
 
-Phase 1 does not expose mutations. Phase 2 introduces `sendMessage` for new outbound messages only, with binary-specific behavior:
+Phase 1 does not expose mutations. Phase 2 splits the outbound surface strictly by binary:
 
-- `gmail-gateway-draft` treats `sendMessage` as draft creation and never sends the message immediately
-- `gmail-gateway-sender` treats `sendMessage` as direct provider send and also supports `createDraft`
+- `gmail-gateway-draft` owns the draft lifecycle (`createDraft`, `updateDraft`, `deleteDraft`)
+  and has no send path; `sendMessage`, `replyMessage`, and `forwardMessage` are rejected with
+  `SEND_DISABLED_IN_DRAFT_GATEWAY` before any provider call
+- `gmail-gateway-sender` treats `sendMessage` as direct provider send, sends replies and
+  forwards directly, and also supports the full draft lifecycle
 - `gmail-gateway-reader` rejects write mutations with `SEND_DISABLED_IN_READER`
+
+`updateDraft` maps to the provider draft-replacement call (Gmail `drafts.update`), so the
+gateway rebuilds the whole draft from the merged state rather than patching it in place:
+
+- header and body fields left out of the input are read back from the existing draft
+- supplying `textBody` and/or `htmlBody` replaces the entire body with exactly what was
+  supplied, so an update cannot leave a stale alternative part behind
+- attachments already on the draft are all retained unless `keepAttachmentIds` is given;
+  when given, only the listed provider attachment ids survive, and an empty list drops all
+- `attachmentPaths` adds validated local files on top of what is retained, so
+  `keepAttachmentIds: []` combined with `attachmentPaths` is a full attachment replacement
+- `keepAttachmentIds` entries that are not on the draft fail with `ATTACHMENT_NOT_FOUND`
+  before the provider write
+- the draft stays on its original provider thread, and its `In-Reply-To` and `References`
+  headers are carried over
+- the merged result is validated with the same outbound rules as `createDraft`, so an updated
+  draft must still have at least one recipient and a body
+
+`deleteDraft` maps to the provider draft delete and returns the deleted `draftId` with
+status `DRAFT_DELETED`.
 
 The shared input fields are:
 
@@ -438,7 +505,7 @@ The shared input fields are:
 Reply and forward workflows are provided by the dedicated `replyMessage` and
 `forwardMessage` mutations described above rather than by `SendMessageInput`.
 
-`gmail-gateway-draft` `sendMessage` and `gmail-gateway-sender` `createDraft` return:
+`createDraft` and `updateDraft` return:
 
 - canonical draft metadata
 - provider-assigned draft ID and message ID when available
@@ -562,6 +629,8 @@ GraphQL errors should be structured with machine-readable extension codes:
 - `AUTH_BOOTSTRAP_NOT_IMPLEMENTED`
 - `SEND_NOT_SUPPORTED`
 - `SEND_DISABLED_IN_READER`
+- `SEND_DISABLED_IN_DRAFT_GATEWAY`
+- `DRAFT_NOT_FOUND`
 - `CONFIG_INVALID`
 - `UNEXPECTED_ERROR`
 
@@ -575,7 +644,9 @@ GraphQL errors should be structured with machine-readable extension codes:
 ## Security Constraints
 
 - the reader binary must not expose write resolvers
-- direct send resolvers must be reachable only through `gmail-gateway-sender`
+- direct send resolvers (`sendMessage`, `replyMessage`, `forwardMessage`) must be reachable
+  only through `gmail-gateway-sender`; `gmail-gateway-draft` rejects them before any provider
+  call so the draft binary has no code path that can transmit mail
 - `gmail-gateway-sender` may also expose draft resolvers, but draft resolvers must not send mail
 - file paths returned by gateway download commands must always be normalized
   under configured storage roots or an allowed output directory
@@ -616,9 +687,9 @@ Adding a new provider should usually require:
 
 ### Phase 2
 
-- Gmail draft creation support in `gmail-gateway-draft`
-- Gmail direct send support in `gmail-gateway-sender`
-- new outbound messages only
+- Gmail draft lifecycle support in `gmail-gateway-draft` (`createDraft`, `updateDraft`,
+  `deleteDraft`, plus the `drafts` and `draft` queries)
+- Gmail direct send support in `gmail-gateway-sender` only
 - long-running `serve` mode if local client ergonomics require it
 
 ### Phase 3

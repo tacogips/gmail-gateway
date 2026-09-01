@@ -80,6 +80,7 @@ struct MailMessage: Codable {
     let providerMetadata: MailProviderMetadata?
     let rfc822MessageId: String?
     let referencesHeader: String?
+    let inReplyToHeader: String?
 
     func graphQLObject() -> [String: Any] {
         [
@@ -232,9 +233,50 @@ struct MailWriteResult: Codable {
             "status": status,
             "rejectedAttachments": rejectedAttachments.map { $0.graphQLObject() }
         ]
-        if operation == GmailGatewayWriteMode.draftDefault.operationValue {
+        if GmailGatewayWriteOperation(rawValue: operation)?.isDraftOperation == true {
             object["draftId"] = draftId as Any? ?? NSNull()
         }
         return object
+    }
+}
+
+struct MailDraft: Codable {
+    let id: String
+    let accountId: String
+    let message: MailMessage?
+
+    func graphQLObject() -> [String: Any] {
+        [
+            "id": id,
+            "accountId": accountId,
+            "message": message?.graphQLObject() as Any? ?? NSNull()
+        ]
+    }
+}
+
+struct MailDraftEdge: Codable {
+    let cursor: String
+    let node: MailDraft?
+
+    func graphQLObject() -> [String: Any] {
+        var object: [String: Any] = ["cursor": cursor]
+        if let node {
+            object["node"] = node.graphQLObject()
+        }
+        return object
+    }
+}
+
+struct MailDraftConnection: Codable {
+    let edges: [MailDraftEdge]
+    let pageInfo: MailPageInfo
+    let totalCount: Int
+
+    func graphQLObject() -> [String: Any] {
+        [
+            "edges": edges.map { $0.graphQLObject() },
+            "pageInfo": pageInfo.graphQLObject(),
+            "totalCount": totalCount
+        ]
     }
 }

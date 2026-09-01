@@ -25,7 +25,8 @@ func runSmokeTests() throws {
     try testAccountsGraphQL(cleanup: &cleanup)
     try testStructuredThreadSearchGmailQuery(cleanup: &cleanup)
     try testReaderRejectsSendMutation(cleanup: &cleanup)
-    try testDraftGatewayRoutesSendMessageToDraft(cleanup: &cleanup)
+    try testDraftGatewayRejectsSendMutations(cleanup: &cleanup)
+    try testDraftGatewayRoutesDraftMutations(cleanup: &cleanup)
     try testSenderRoutesSendMessageToDirectSend(cleanup: &cleanup)
     try testSenderAlsoRoutesCreateDraft(cleanup: &cleanup)
     try testMissingDefaultAuthThreadsGraphQLError(cleanup: &cleanup)
@@ -49,7 +50,12 @@ func testHelpOutput() throws {
         "root help should document repeated download keys"
     )
     let draftHelp = runCli(["--help"], mode: .draftGateway)
-    try assert(draftHelp.stdout.contains("sendMessage creates a provider draft"), "draft help should document draft default")
+    try assert(draftHelp.stdout.contains("This binary is draft-only"), "draft help should document the draft-only surface")
+    try assert(
+        draftHelp.stdout.contains("SEND_DISABLED_IN_DRAFT_GATEWAY"),
+        "draft help should document the rejected send mutations"
+    )
+    try assert(draftHelp.stdout.contains("keepAttachmentIds"), "draft help should document attachment replacement")
     let senderHelp = runCli(["--help"], mode: .directSender)
     try assert(senderHelp.stdout.contains("sendMessage directly sends mail"), "sender help should document direct send")
     let fileHelp = runCli(["file", "download", "--help"])
@@ -403,18 +409,66 @@ func testReaderRejectsSendMutation(cleanup: inout [String]) throws {
     ])
     try assert(draftResult.exitCode == GmailGatewayExitCode.graphqlExecutionError.rawValue, "reader draft mutation should fail")
     try assert(draftResult.stdout.contains("SEND_DISABLED_IN_READER"), "reader should reject draft mutation with reader code")
+    for query in [updateDraftMutation(), deleteDraftMutation(), draftsQuery()] {
+        let result = runCli([
+            "graphql",
+            "--config", fixture.configPath,
+            "--query", query
+        ])
+        try assert(
+            result.exitCode == GmailGatewayExitCode.graphqlExecutionError.rawValue,
+            "reader draft surface should fail"
+        )
+        try assert(
+            result.stdout.contains("SEND_DISABLED_IN_READER"),
+            "reader should reject the draft surface with reader code"
+        )
+    }
 }
 
-func testDraftGatewayRoutesSendMessageToDraft(cleanup: inout [String]) throws {
+func testDraftGatewayRejectsSendMutations(cleanup: inout [String]) throws {
     let fixture = try trackedFixture(cleanup: &cleanup)
-    let result = runCli([
-        "graphql",
-        "--config", fixture.configPath,
-        "--query", outboundMutation()
-    ], mode: .draftGateway)
-    try assert(result.exitCode == GmailGatewayExitCode.graphqlExecutionError.rawValue, "draft gateway should stop before provider call")
-    try assert(result.stdout.contains("creating Gmail drafts"), "draft gateway should use draft auth context")
-    try assert(!result.stdout.contains("sending Gmail messages"), "draft gateway should not use direct-send context")
+    for query in [outboundMutation(), replyMutation(), forwardMutation()] {
+        let result = runCli([
+            "graphql",
+            "--config", fixture.configPath,
+            "--query", query
+        ], mode: .draftGateway)
+        try assert(
+            result.exitCode == GmailGatewayExitCode.graphqlExecutionError.rawValue,
+            "draft gateway should reject send mutations"
+        )
+        try assert(
+            result.stdout.contains("SEND_DISABLED_IN_DRAFT_GATEWAY"),
+            "draft gateway should reject send mutations with the draft-gateway code"
+        )
+        try assert(
+            !result.stdout.contains("creating Gmail drafts"),
+            "draft gateway should not silently downgrade a send mutation to a draft"
+        )
+    }
+}
+
+func testDraftGatewayRoutesDraftMutations(cleanup: inout [String]) throws {
+    let fixture = try trackedFixture(cleanup: &cleanup)
+    let expectedContexts = [
+        (draftMutation(), "creating Gmail drafts"),
+        (updateDraftMutation(), "updating Gmail drafts"),
+        (deleteDraftMutation(), "deleting Gmail drafts")
+    ]
+    for (query, expectedContext) in expectedContexts {
+        let result = runCli([
+            "graphql",
+            "--config", fixture.configPath,
+            "--query", query
+        ], mode: .draftGateway)
+        try assert(
+            result.exitCode == GmailGatewayExitCode.graphqlExecutionError.rawValue,
+            "draft gateway should stop before provider call"
+        )
+        try assert(result.stdout.contains(expectedContext), "draft gateway should use the \(expectedContext) auth context")
+        try assert(!result.stdout.contains("sending Gmail messages"), "draft gateway should not use direct-send context")
+    }
 }
 
 func testSenderRoutesSendMessageToDirectSend(cleanup: inout [String]) throws {
@@ -471,6 +525,79 @@ func draftMutation() -> String {
         operation
         draftId
         messageId
+      }
+    }
+    """
+}
+
+func replyMutation() -> String {
+    """
+    mutation {
+      replyMessage(input: {
+        accountId: "personal",
+        messageId: "message-1",
+        textBody: "Smoke reply body"
+      }) {
+        status
+      }
+    }
+    """
+}
+
+func forwardMutation() -> String {
+    """
+    mutation {
+      forwardMessage(input: {
+        accountId: "personal",
+        messageId: "message-1",
+        to: ["recipient@example.com"]
+      }) {
+        status
+      }
+    }
+    """
+}
+
+func updateDraftMutation() -> String {
+    """
+    mutation {
+      updateDraft(input: {
+        accountId: "personal",
+        draftId: "draft-1",
+        subject: "Smoke draft update",
+        keepAttachmentIds: []
+      }) {
+        status
+        operation
+        draftId
+      }
+    }
+    """
+}
+
+func deleteDraftMutation() -> String {
+    """
+    mutation {
+      deleteDraft(input: {
+        accountId: "personal",
+        draftId: "draft-1"
+      }) {
+        status
+        operation
+        draftId
+      }
+    }
+    """
+}
+
+func draftsQuery() -> String {
+    """
+    query {
+      drafts(input: {
+        accountId: "personal",
+        first: 5
+      }) {
+        totalCount
       }
     }
     """

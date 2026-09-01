@@ -50,3 +50,14 @@ struct GmailAPIHeader: Decodable {
 struct GmailAttachmentPayloadResponse: Decodable {
     let data: String?
 }
+
+struct GmailAPIDraft: Decodable {
+    let id: String?
+    let message: GmailAPIMessage?
+}
+
+struct GmailDraftListResponse: Decodable {
+    let drafts: [GmailAPIDraft]?
+    let nextPageToken: String?
+    let resultSizeEstimate: Int?
+}

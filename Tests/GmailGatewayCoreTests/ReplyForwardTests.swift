@@ -14,7 +14,8 @@ private func testOriginalMessage(
     cc: [String] = [],
     replyTo: [String] = [],
     rfc822MessageId: String? = "<original@mail.example.com>",
-    referencesHeader: String? = nil
+    referencesHeader: String? = nil,
+    inReplyToHeader: String? = nil
 ) -> MailMessage {
     MailMessage(
         id: "message-1",
@@ -34,7 +35,8 @@ private func testOriginalMessage(
         historyId: nil,
         providerMetadata: nil,
         rfc822MessageId: rfc822MessageId,
-        referencesHeader: referencesHeader
+        referencesHeader: referencesHeader,
+        inReplyToHeader: inReplyToHeader
     )
 }
 

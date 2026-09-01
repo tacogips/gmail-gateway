@@ -70,7 +70,7 @@ public struct ForwardMessageInput: Sendable {
 
 extension GmailGatewayWriteService {
     public func replyMessage(input: ReplyMessageInput, mode: GmailGatewayWriteMode) throws -> [String: Any] {
-        let (account, credential) = try requireWritableAccount(accountId: input.accountId, mode: mode)
+        let (account, credential) = try requireWritableAccount(accountId: input.accountId, operation: mode.operation)
         let original = try providerAdapter.getMessage(
             account: account,
             credential: credential,
@@ -81,7 +81,7 @@ extension GmailGatewayWriteService {
     }
 
     public func forwardMessage(input: ForwardMessageInput, mode: GmailGatewayWriteMode) throws -> [String: Any] {
-        let (account, credential) = try requireWritableAccount(accountId: input.accountId, mode: mode)
+        let (account, credential) = try requireWritableAccount(accountId: input.accountId, operation: mode.operation)
         let original = try providerAdapter.getMessage(
             account: account,
             credential: credential,

@@ -26,11 +26,38 @@ protocol MailProviderAdapter {
         validatedAttachmentPaths: [String],
         rejectedAttachments: [MailRejectedAttachment]
     ) throws -> MailWriteResult
+    func listDrafts(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        first: Int,
+        after: String?,
+        includeEdges: Bool,
+        includeNodeDetails: Bool
+    ) throws -> MailDraftConnection
+    func getDraft(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        draftId: String
+    ) throws -> MailDraft
+    func updateDraft(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        draftId: String,
+        input: OutboundMailInput,
+        validatedAttachmentPaths: [String],
+        rejectedAttachments: [MailRejectedAttachment]
+    ) throws -> MailWriteResult
+    func deleteDraft(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        draftId: String
+    ) throws -> MailWriteResult
 }
 
 struct GmailProviderAdapter: MailProviderAdapter {
     private let reader = GmailLiveReader()
     private let writer = GmailLiveWriter()
+    private let drafts = GmailLiveDrafts()
 
     func searchThreads(_ request: GmailThreadSearchRequest) throws -> MailThreadConnection {
         try reader.searchThreads(request)
@@ -96,5 +123,57 @@ struct GmailProviderAdapter: MailProviderAdapter {
             validatedAttachmentPaths: validatedAttachmentPaths,
             rejectedAttachments: rejectedAttachments
         )
+    }
+
+    func listDrafts(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        first: Int,
+        after: String?,
+        includeEdges: Bool,
+        includeNodeDetails: Bool
+    ) throws -> MailDraftConnection {
+        try drafts.listDrafts(
+            account: account,
+            credential: credential,
+            first: first,
+            after: after,
+            includeEdges: includeEdges,
+            includeNodeDetails: includeNodeDetails
+        )
+    }
+
+    func getDraft(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        draftId: String
+    ) throws -> MailDraft {
+        try drafts.getDraft(account: account, credential: credential, draftId: draftId)
+    }
+
+    func updateDraft(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        draftId: String,
+        input: OutboundMailInput,
+        validatedAttachmentPaths: [String],
+        rejectedAttachments: [MailRejectedAttachment]
+    ) throws -> MailWriteResult {
+        try drafts.updateDraft(
+            account: account,
+            credential: credential,
+            draftId: draftId,
+            input: input,
+            validatedAttachmentPaths: validatedAttachmentPaths,
+            rejectedAttachments: rejectedAttachments
+        )
+    }
+
+    func deleteDraft(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        draftId: String
+    ) throws -> MailWriteResult {
+        try drafts.deleteDraft(account: account, credential: credential, draftId: draftId)
     }
 }

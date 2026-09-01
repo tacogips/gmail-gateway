@@ -26,15 +26,24 @@ enum GoogleOAuthClientUse {
 
 enum GmailAccessTokenUse {
     case read
+    case draftRead
     case draftCreation
+    case draftUpdate
+    case draftDelete
     case directSend
 
     var missingAuthMessage: String {
         switch self {
         case .read:
             return "Authentication is required before reading Gmail"
+        case .draftRead:
+            return "Authentication is required before reading Gmail drafts"
         case .draftCreation:
             return "Authentication is required before creating Gmail drafts"
+        case .draftUpdate:
+            return "Authentication is required before updating Gmail drafts"
+        case .draftDelete:
+            return "Authentication is required before deleting Gmail drafts"
         case .directSend:
             return "Authentication is required before sending Gmail messages"
         }
@@ -44,7 +53,7 @@ enum GmailAccessTokenUse {
         switch self {
         case .read:
             return .bestEffort
-        case .draftCreation, .directSend:
+        case .draftRead, .draftCreation, .draftUpdate, .draftDelete, .directSend:
             return .required
         }
     }
