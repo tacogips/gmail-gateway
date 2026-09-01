@@ -233,7 +233,7 @@ struct MailWriteResult: Codable {
             "status": status,
             "rejectedAttachments": rejectedAttachments.map { $0.graphQLObject() }
         ]
-        if GmailGatewayWriteOperation(rawValue: operation)?.isDraftOperation == true {
+        if GmailGatewayWriteOperation(rawValue: operation)?.reportsDraftId == true {
             object["draftId"] = draftId as Any? ?? NSNull()
         }
         return object
@@ -277,6 +277,44 @@ struct MailDraftConnection: Codable {
             "edges": edges.map { $0.graphQLObject() },
             "pageInfo": pageInfo.graphQLObject(),
             "totalCount": totalCount
+        ]
+    }
+}
+
+struct MailLabel: Codable {
+    let id: String
+    let accountId: String
+    let name: String?
+    let type: String?
+    let messageListVisibility: String?
+    let labelListVisibility: String?
+
+    func graphQLObject() -> [String: Any] {
+        [
+            "id": id,
+            "accountId": accountId,
+            "name": name as Any? ?? NSNull(),
+            "type": type as Any? ?? NSNull(),
+            "messageListVisibility": messageListVisibility as Any? ?? NSNull(),
+            "labelListVisibility": labelListVisibility as Any? ?? NSNull()
+        ]
+    }
+}
+
+struct MailProfile: Codable {
+    let accountId: String
+    let emailAddress: String?
+    let messagesTotal: Int?
+    let threadsTotal: Int?
+    let historyId: String?
+
+    func graphQLObject() -> [String: Any] {
+        [
+            "accountId": accountId,
+            "emailAddress": emailAddress as Any? ?? NSNull(),
+            "messagesTotal": messagesTotal as Any? ?? NSNull(),
+            "threadsTotal": threadsTotal as Any? ?? NSNull(),
+            "historyId": historyId as Any? ?? NSNull()
         ]
     }
 }

@@ -43,8 +43,8 @@ All business operations are exposed through GraphQL. The CLI surface exists only
 | Binary | Read Mail | Send Mail | GraphQL Schema |
 |--------|-----------|-----------|----------------|
 | `gmail-gateway-reader` | Yes | No | `Query` only, plus local-cache side effects such as attachment materialization |
-| `gmail-gateway-draft` | Planned for Phase 2 | No, never | `Query`, draft `Query` (`drafts`, `draft`), and the draft lifecycle `Mutation` (`createDraft`, `updateDraft`, `deleteDraft`) |
-| `gmail-gateway-sender` | Planned for Phase 2 | Yes, explicit direct send | `Query`, draft `Query`, direct-send `Mutation`, and the draft lifecycle `Mutation` |
+| `gmail-gateway-draft` | Planned for Phase 2 | No, never | `Query`, draft `Query` (`drafts`, `draft`), and the draft lifecycle `Mutation` (`createDraft`, `createReplyDraft`, `createForwardDraft`, `updateDraft`, `deleteDraft`) |
+| `gmail-gateway-sender` | Planned for Phase 2 | Yes, explicit direct send plus `sendDraft` | `Query`, draft `Query`, direct-send `Mutation`, and the draft lifecycle `Mutation` |
 
 `gmail-gateway-reader` must fail fast if a send mutation is submitted. The current CLI GraphQL executor enforces this by rejecting write root fields before resolver dispatch with `SEND_DISABLED_IN_READER`; it does not yet expose a separate reduced GraphQL schema.
 
@@ -177,19 +177,51 @@ type Query {
   message(accountId: ID!, messageId: ID!): MailMessage
   messageFileSet(accountId: ID!, messageId: ID!): MailMessageFileSet!
   attachment(accountId: ID!, messageId: ID!, attachmentId: ID!): MailAttachment
+  labels(accountId: ID!): [MailLabel!]!
+  profile(accountId: ID!): MailProfile!
+}
+
+type MailLabel {
+  id: ID!
+  accountId: ID!
+  name: String
+  type: String                  # system or user
+  messageListVisibility: String
+  labelListVisibility: String
+}
+
+type MailProfile {
+  accountId: ID!
+  emailAddress: String
+  messagesTotal: Int
+  threadsTotal: Int
+  historyId: String
 }
 ```
+
+`labels` is what makes the `ThreadSearchInput.labelIds` filter usable: it is the only
+way to discover the provider label ids that filter accepts. `profile` reports the
+authenticated mailbox identity and totals. Both are reads, so they need only the
+`read` access mode and are available in every binary.
 
 Phase 2 adds:
 
 ```graphql
 type Mutation {
   createDraft(input: SendMessageInput!): SendMessagePayload!
+  createReplyDraft(input: ReplyMessageInput!): SendMessagePayload!
+  createForwardDraft(input: ForwardMessageInput!): SendMessagePayload!
   updateDraft(input: UpdateDraftInput!): SendMessagePayload!
   deleteDraft(input: DeleteDraftInput!): SendMessagePayload!
   sendMessage(input: SendMessageInput!): SendMessagePayload!
   replyMessage(input: ReplyMessageInput!): SendMessagePayload!
   forwardMessage(input: ForwardMessageInput!): SendMessagePayload!
+  sendDraft(input: SendDraftInput!): SendMessagePayload!
+}
+
+input SendDraftInput {
+  accountId: ID!
+  draftId: ID!
 }
 
 input UpdateDraftInput {
@@ -237,8 +269,10 @@ input ForwardMessageInput {
 ```
 
 `replyMessage` and `forwardMessage` are sender-only mutations that send directly.
-The draft binary has no send path at all and rejects them before any provider
-call. Replies set
+The draft binary has no send path at all and rejects them before any provider call;
+it prepares the same threaded messages as drafts through `createReplyDraft` and
+`createForwardDraft`, which build identical content but always stop at draft creation.
+Replies set
 `In-Reply-To`, `References`, the provider `threadId`, and a `Re:` subject
 derived from the original message. Forwards quote the original body under a
 `---------- Forwarded message ----------` header block, use a `Fwd:` subject,
@@ -468,11 +502,13 @@ GraphQL responses use the upper-case enum values shown above.
 
 Phase 1 does not expose mutations. Phase 2 splits the outbound surface strictly by binary:
 
-- `gmail-gateway-draft` owns the draft lifecycle (`createDraft`, `updateDraft`, `deleteDraft`)
-  and has no send path; `sendMessage`, `replyMessage`, and `forwardMessage` are rejected with
+- `gmail-gateway-draft` owns the draft lifecycle (`createDraft`, `createReplyDraft`,
+  `createForwardDraft`, `updateDraft`, `deleteDraft`) and has no send path; `sendMessage`,
+  `replyMessage`, `forwardMessage`, and `sendDraft` are rejected with
   `SEND_DISABLED_IN_DRAFT_GATEWAY` before any provider call
 - `gmail-gateway-sender` treats `sendMessage` as direct provider send, sends replies and
-  forwards directly, and also supports the full draft lifecycle
+  forwards directly, sends prepared drafts through `sendDraft`, and also supports the full
+  draft lifecycle
 - `gmail-gateway-reader` rejects write mutations with `SEND_DISABLED_IN_READER`
 
 `updateDraft` maps to the provider draft-replacement call (Gmail `drafts.update`), so the
@@ -495,6 +531,11 @@ gateway rebuilds the whole draft from the merged state rather than patching it i
 `deleteDraft` maps to the provider draft delete and returns the deleted `draftId` with
 status `DRAFT_DELETED`.
 
+`sendDraft` maps to the provider draft-send call (Gmail `drafts.send`) and closes the
+draft-then-send workflow: `gmail-gateway-draft` prepares and revises the draft, and
+`gmail-gateway-sender` transmits it by id. It reports operation `SEND_DRAFT` with both the
+`draftId` it sent and the resulting `messageId` and `threadId`.
+
 The shared input fields are:
 
 - required `accountId`
@@ -516,6 +557,24 @@ Reply and forward workflows are provided by the dedicated `replyMessage` and
 - canonical sent message metadata
 - provider-assigned message ID and thread ID
 - rejected attachment paths with reasons if partial validation fails before send
+
+### Deliberately Unmapped Provider Surface
+
+The Gmail API exposes more than the three binaries model. The following are intentionally
+not mapped, because they do not fit the read / draft / send split and would require a new
+capability decision rather than an addition to an existing binary:
+
+- mailbox mutation: `messages.modify`, `messages.trash`, `messages.untrash`,
+  `messages.delete`, `messages.batchModify`, `messages.batchDelete`, and the equivalent
+  `threads.*` mutations, plus `labels.create`, `labels.update`, `labels.patch`,
+  `labels.delete`. These change stored mail rather than reading it, drafting it, or
+  sending it, so they belong to a mailbox-management capability that does not exist yet.
+- mailbox administration: every `users.settings.*` resource (vacation, IMAP, POP,
+  language, filters, delegates, forwarding addresses, send-as identities, S/MIME, CSE).
+- `history.list`, which belongs with the Phase 3 incremental-sync cache.
+- `users.watch` and `users.stop`, which require the long-running `serve` mode that Phase 1
+  explicitly excludes.
+- `messages.import` and `messages.insert`, which ingest mail rather than compose it.
 
 ## Attachment Handling
 

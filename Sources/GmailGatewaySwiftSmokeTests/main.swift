@@ -28,6 +28,8 @@ func runSmokeTests() throws {
     try testDraftGatewayRejectsSendMutations(cleanup: &cleanup)
     try testDraftGatewayRoutesDraftMutations(cleanup: &cleanup)
     try testSenderRoutesSendMessageToDirectSend(cleanup: &cleanup)
+    try testSenderRoutesSendDraftToDirectSend(cleanup: &cleanup)
+    try testReaderExposesLabelAndProfileReads(cleanup: &cleanup)
     try testSenderAlsoRoutesCreateDraft(cleanup: &cleanup)
     try testMissingDefaultAuthThreadsGraphQLError(cleanup: &cleanup)
     try testInvalidInlineVariables(cleanup: &cleanup)
@@ -56,6 +58,10 @@ func testHelpOutput() throws {
         "draft help should document the rejected send mutations"
     )
     try assert(draftHelp.stdout.contains("keepAttachmentIds"), "draft help should document attachment replacement")
+    try assert(draftHelp.stdout.contains("createReplyDraft"), "draft help should document threaded draft creation")
+    try assert(senderHelpDocumentsSendDraft(), "sender help should document sendDraft")
+    let readerHelp = runCli(["--help"])
+    try assert(readerHelp.stdout.contains("labels, and profile"), "reader help should document the label and profile reads")
     let senderHelp = runCli(["--help"], mode: .directSender)
     try assert(senderHelp.stdout.contains("sendMessage directly sends mail"), "sender help should document direct send")
     let fileHelp = runCli(["file", "download", "--help"])
@@ -409,7 +415,7 @@ func testReaderRejectsSendMutation(cleanup: inout [String]) throws {
     ])
     try assert(draftResult.exitCode == GmailGatewayExitCode.graphqlExecutionError.rawValue, "reader draft mutation should fail")
     try assert(draftResult.stdout.contains("SEND_DISABLED_IN_READER"), "reader should reject draft mutation with reader code")
-    for query in [updateDraftMutation(), deleteDraftMutation(), draftsQuery()] {
+    for query in [updateDraftMutation(), deleteDraftMutation(), draftsQuery(), sendDraftMutation(), replyDraftMutation()] {
         let result = runCli([
             "graphql",
             "--config", fixture.configPath,
@@ -428,7 +434,7 @@ func testReaderRejectsSendMutation(cleanup: inout [String]) throws {
 
 func testDraftGatewayRejectsSendMutations(cleanup: inout [String]) throws {
     let fixture = try trackedFixture(cleanup: &cleanup)
-    for query in [outboundMutation(), replyMutation(), forwardMutation()] {
+    for query in [outboundMutation(), replyMutation(), forwardMutation(), sendDraftMutation()] {
         let result = runCli([
             "graphql",
             "--config", fixture.configPath,
@@ -453,6 +459,7 @@ func testDraftGatewayRoutesDraftMutations(cleanup: inout [String]) throws {
     let fixture = try trackedFixture(cleanup: &cleanup)
     let expectedContexts = [
         (draftMutation(), "creating Gmail drafts"),
+        (replyDraftMutation(), "creating Gmail drafts"),
         (updateDraftMutation(), "updating Gmail drafts"),
         (deleteDraftMutation(), "deleting Gmail drafts")
     ]
@@ -468,6 +475,47 @@ func testDraftGatewayRoutesDraftMutations(cleanup: inout [String]) throws {
         )
         try assert(result.stdout.contains(expectedContext), "draft gateway should use the \(expectedContext) auth context")
         try assert(!result.stdout.contains("sending Gmail messages"), "draft gateway should not use direct-send context")
+    }
+}
+
+func senderHelpDocumentsSendDraft() -> Bool {
+    runCli(["--help"], mode: .directSender).stdout.contains("sendDraft sends a draft")
+}
+
+func testSenderRoutesSendDraftToDirectSend(cleanup: inout [String]) throws {
+    let fixture = try trackedFixture(cleanup: &cleanup)
+    let result = runCli([
+        "graphql",
+        "--config", fixture.configPath,
+        "--query", sendDraftMutation()
+    ], mode: .directSender)
+    try assert(
+        result.exitCode == GmailGatewayExitCode.graphqlExecutionError.rawValue,
+        "sender sendDraft should stop before provider call"
+    )
+    try assert(result.stdout.contains("sending Gmail drafts"), "sender should use the draft-send auth context")
+}
+
+func testReaderExposesLabelAndProfileReads(cleanup: inout [String]) throws {
+    let fixture = try trackedFixture(cleanup: &cleanup)
+    for query in [labelsQuery(), profileQuery()] {
+        let result = runCli([
+            "graphql",
+            "--config", fixture.configPath,
+            "--query", query
+        ])
+        try assert(
+            result.exitCode == GmailGatewayExitCode.graphqlExecutionError.rawValue,
+            "reader mailbox metadata should stop at the auth boundary, not at schema dispatch"
+        )
+        try assert(
+            !result.stdout.contains("Unsupported GraphQL query"),
+            "reader should recognize the label and profile root fields"
+        )
+        try assert(
+            result.stdout.contains("AUTH_REQUIRED"),
+            "reader mailbox metadata should fail on missing auth rather than an unknown field"
+        )
     }
 }
 
@@ -585,6 +633,60 @@ func deleteDraftMutation() -> String {
         status
         operation
         draftId
+      }
+    }
+    """
+}
+
+func sendDraftMutation() -> String {
+    """
+    mutation {
+      sendDraft(input: {
+        accountId: "personal",
+        draftId: "draft-1"
+      }) {
+        status
+        operation
+        draftId
+        messageId
+      }
+    }
+    """
+}
+
+func replyDraftMutation() -> String {
+    """
+    mutation {
+      createReplyDraft(input: {
+        accountId: "personal",
+        messageId: "message-1",
+        textBody: "Smoke reply draft body"
+      }) {
+        status
+        operation
+        draftId
+      }
+    }
+    """
+}
+
+func labelsQuery() -> String {
+    """
+    query {
+      labels(input: { accountId: "personal" }) {
+        id
+        name
+      }
+    }
+    """
+}
+
+func profileQuery() -> String {
+    """
+    query {
+      profile(input: { accountId: "personal" }) {
+        emailAddress
+        messagesTotal
       }
     }
     """

@@ -69,6 +69,18 @@ public struct ForwardMessageInput: Sendable {
 }
 
 extension GmailGatewayWriteService {
+    /// Creates a threaded reply draft. This never sends, so it stays available in
+    /// `gmail-gateway-draft` even though `replyMessage` does not.
+    public func createReplyDraft(input: ReplyMessageInput) throws -> [String: Any] {
+        try replyMessage(input: input, mode: .draftDefault)
+    }
+
+    /// Creates a threaded forward draft. This never sends, so it stays available in
+    /// `gmail-gateway-draft` even though `forwardMessage` does not.
+    public func createForwardDraft(input: ForwardMessageInput) throws -> [String: Any] {
+        try forwardMessage(input: input, mode: .draftDefault)
+    }
+
     public func replyMessage(input: ReplyMessageInput, mode: GmailGatewayWriteMode) throws -> [String: Any] {
         let (account, credential) = try requireWritableAccount(accountId: input.accountId, operation: mode.operation)
         let original = try providerAdapter.getMessage(

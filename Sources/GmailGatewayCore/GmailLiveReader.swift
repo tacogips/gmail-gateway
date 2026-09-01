@@ -152,6 +152,50 @@ struct GmailLiveReader {
         )
     }
 
+    func listLabels(account: AccountConfig, credential: CredentialConfig) throws -> [MailLabel] {
+        let accessToken = try validGmailAccessToken(credential: credential, use: .read)
+        var components = gmailURLComponents(path: "/gmail/v1/users/me/labels")
+        components.queryItems = nil
+        let response = try getGmailObject(
+            components: components,
+            accessToken: accessToken,
+            context: "Gmail label list failed",
+            as: GmailLabelListResponse.self
+        )
+        return (response.labels ?? []).compactMap { label in
+            guard let id = nonBlank(label.id) else {
+                return nil
+            }
+            return MailLabel(
+                id: id,
+                accountId: account.id,
+                name: nonBlank(label.name),
+                type: nonBlank(label.type),
+                messageListVisibility: nonBlank(label.messageListVisibility),
+                labelListVisibility: nonBlank(label.labelListVisibility)
+            )
+        }
+    }
+
+    func getProfile(account: AccountConfig, credential: CredentialConfig) throws -> MailProfile {
+        let accessToken = try validGmailAccessToken(credential: credential, use: .read)
+        var components = gmailURLComponents(path: "/gmail/v1/users/me/profile")
+        components.queryItems = nil
+        let response = try getGmailObject(
+            components: components,
+            accessToken: accessToken,
+            context: "Gmail profile retrieval failed",
+            as: GmailProfileResponse.self
+        )
+        return MailProfile(
+            accountId: account.id,
+            emailAddress: nonBlank(response.emailAddress),
+            messagesTotal: response.messagesTotal,
+            threadsTotal: response.threadsTotal,
+            historyId: nonBlank(response.historyId)
+        )
+    }
+
     func getAttachmentPayload(
         credential: CredentialConfig,
         messageId: String,

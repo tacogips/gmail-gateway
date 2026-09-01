@@ -304,6 +304,18 @@ public struct GmailGatewayService {
         ).graphQLObject()
     }
 
+    public func listLabels(accountId: String) throws -> [[String: Any]] {
+        let account = try requireAccount(accountId)
+        let credential = try requireCredential(account.credentialId)
+        return try providerAdapter.listLabels(account: account, credential: credential).map { $0.graphQLObject() }
+    }
+
+    public func getProfile(accountId: String) throws -> [String: Any] {
+        let account = try requireAccount(accountId)
+        let credential = try requireCredential(account.credentialId)
+        return try providerAdapter.getProfile(account: account, credential: credential).graphQLObject()
+    }
+
     public func getAuthStatus(credentialId: String) throws -> [String: Any] {
         let credential = try requireCredential(credentialId)
         let tokenState = inspectTokenStore(credential: credential)

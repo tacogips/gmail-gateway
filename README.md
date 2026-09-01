@@ -25,14 +25,45 @@ Each binary exposes a strictly separate slice of the GraphQL surface:
 
 | Binary | Reads | Drafts | Sends |
 |--------|-------|--------|-------|
-| `gmail-gateway-reader` | Yes | No | No |
-| `gmail-gateway-draft` | Yes | `createDraft`, `updateDraft`, `deleteDraft`, `drafts`, `draft` | No, never |
-| `gmail-gateway-sender` | Yes | Same draft surface as the draft binary | `sendMessage`, `replyMessage`, `forwardMessage` |
+| `gmail-gateway-reader` | `accounts`, `account`, `threads`, `thread`, `message`, `messageFileSet`, `attachment`, `labels`, `profile` | No | No |
+| `gmail-gateway-draft` | Same reads | `createDraft`, `createReplyDraft`, `createForwardDraft`, `updateDraft`, `deleteDraft`, `drafts`, `draft` | No, never |
+| `gmail-gateway-sender` | Same reads | Same draft surface as the draft binary | `sendMessage`, `replyMessage`, `forwardMessage`, `sendDraft` |
 
 Send mutations submitted to `gmail-gateway-draft` are rejected with
 `SEND_DISABLED_IN_DRAFT_GATEWAY` before any provider call, so the draft binary has no
 code path that can transmit mail. Draft mutations and queries submitted to
 `gmail-gateway-reader` are rejected with `SEND_DISABLED_IN_READER`.
+
+`createReplyDraft` and `createForwardDraft` build the same threaded reply and forward
+content as `replyMessage` and `forwardMessage`, but always stop at draft creation, so the
+draft binary can prepare threaded mail without gaining a send path.
+
+### Draft, then send
+
+`labels` is the only way to discover the label ids that the `threads` `labelIds` filter
+accepts, and `profile` reports the authenticated mailbox and its totals:
+
+```bash
+swift run gmail-gateway-reader graphql --query 'query { labels(accountId: "personal") { id name type } }'
+swift run gmail-gateway-reader graphql --query 'query { profile(accountId: "personal") { emailAddress messagesTotal threadsTotal } }'
+```
+
+Prepare a draft with the draft binary, then send it by id with the sender:
+
+```bash
+swift run gmail-gateway-draft graphql --query '
+mutation {
+  createReplyDraft(input: {
+    accountId: "personal",
+    messageId: "1930f0c2b1a4d5e6",
+    replyAll: true,
+    textBody: "Thanks, sending the report shortly."
+  }) { draftId }
+}'
+
+swift run gmail-gateway-sender graphql --query '
+mutation { sendDraft(input: { accountId: "personal", draftId: "r-1234567890" }) { operation status draftId messageId threadId } }'
+```
 
 ### Updating a draft
 

@@ -12,6 +12,8 @@ protocol MailProviderAdapter {
         attachmentId: String
     ) throws -> MailAttachment
     func getAttachmentPayload(credential: CredentialConfig, messageId: String, attachmentId: String) throws -> Data
+    func listLabels(account: AccountConfig, credential: CredentialConfig) throws -> [MailLabel]
+    func getProfile(account: AccountConfig, credential: CredentialConfig) throws -> MailProfile
     func createDraft(
         account: AccountConfig,
         credential: CredentialConfig,
@@ -48,6 +50,11 @@ protocol MailProviderAdapter {
         rejectedAttachments: [MailRejectedAttachment]
     ) throws -> MailWriteResult
     func deleteDraft(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        draftId: String
+    ) throws -> MailWriteResult
+    func sendDraft(
         account: AccountConfig,
         credential: CredentialConfig,
         draftId: String
@@ -91,6 +98,14 @@ struct GmailProviderAdapter: MailProviderAdapter {
 
     func getAttachmentPayload(credential: CredentialConfig, messageId: String, attachmentId: String) throws -> Data {
         try reader.getAttachmentPayload(credential: credential, messageId: messageId, attachmentId: attachmentId)
+    }
+
+    func listLabels(account: AccountConfig, credential: CredentialConfig) throws -> [MailLabel] {
+        try reader.listLabels(account: account, credential: credential)
+    }
+
+    func getProfile(account: AccountConfig, credential: CredentialConfig) throws -> MailProfile {
+        try reader.getProfile(account: account, credential: credential)
     }
 
     func createDraft(
@@ -175,5 +190,13 @@ struct GmailProviderAdapter: MailProviderAdapter {
         draftId: String
     ) throws -> MailWriteResult {
         try drafts.deleteDraft(account: account, credential: credential, draftId: draftId)
+    }
+
+    func sendDraft(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        draftId: String
+    ) throws -> MailWriteResult {
+        try writer.sendDraft(account: account, credential: credential, draftId: draftId)
     }
 }

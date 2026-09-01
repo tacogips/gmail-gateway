@@ -76,6 +76,12 @@ private func executeReaderGraphQLData(service: GmailGatewayService, query: Strin
     if let source = rootFieldSource("attachment", in: query) {
         return try graphQLAttachmentData(service: service, query: source)
     }
+    if let source = rootFieldSource("labels", in: query) {
+        return ["labels": try service.listLabels(accountId: try extractStringArgument("accountId", from: source))]
+    }
+    if let source = rootFieldSource("profile", in: query) {
+        return ["profile": try service.getProfile(accountId: try extractStringArgument("accountId", from: source))]
+    }
     throw GmailGatewayError(
         "Unsupported GraphQL query",
         code: .invalidArgument,
@@ -100,6 +106,19 @@ public func executeWriteGraphQL(
         try rejectSendMutationsOutsideSender(query: scannedQuery, mode: mode)
         if let data = try executeDraftMutation(config: config, query: scannedQuery) {
             return (["data": data], .success)
+        }
+        if let source = rootFieldSource("sendDraft", in: scannedQuery) {
+            return (
+                [
+                    "data": [
+                        "sendDraft": try GmailGatewayWriteService(config: config).sendDraft(
+                            accountId: try extractStringArgument("accountId", from: source),
+                            draftId: try extractStringArgument("draftId", from: source)
+                        )
+                    ]
+                ],
+                .success
+            )
         }
         if let source = rootFieldSource("sendMessage", in: scannedQuery) {
             return (

@@ -1,7 +1,13 @@
 import Foundation
 
-let draftMutationRootFields = ["createDraft", "updateDraft", "deleteDraft"]
-let sendMutationRootFields = ["sendMessage", "replyMessage", "forwardMessage"]
+let draftMutationRootFields = [
+    "createDraft",
+    "createReplyDraft",
+    "createForwardDraft",
+    "updateDraft",
+    "deleteDraft"
+]
+let sendMutationRootFields = ["sendMessage", "replyMessage", "forwardMessage", "sendDraft"]
 let draftQueryRootFields = ["drafts", "draft"]
 
 private let supportedUpdateDraftFields: Set<String> = [
@@ -27,6 +33,20 @@ func executeDraftMutation(
             "createDraft": try GmailGatewayWriteService(config: config).sendMessage(
                 input: try outboundMailInput(from: source),
                 mode: .draftDefault
+            )
+        ]
+    }
+    if let source = rootFieldSource("createReplyDraft", in: query) {
+        return [
+            "createReplyDraft": try GmailGatewayWriteService(config: config).createReplyDraft(
+                input: try replyMessageInput(from: source)
+            )
+        ]
+    }
+    if let source = rootFieldSource("createForwardDraft", in: query) {
+        return [
+            "createForwardDraft": try GmailGatewayWriteService(config: config).createForwardDraft(
+                input: try forwardMessageInput(from: source)
             )
         ]
     }

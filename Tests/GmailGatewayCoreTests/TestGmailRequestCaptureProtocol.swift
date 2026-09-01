@@ -15,6 +15,9 @@ final class TestGmailRequestCaptureProtocol: URLProtocol {
     nonisolated(unsafe) static var messageGetResponseData: Data?
     nonisolated(unsafe) static var attachmentResponseData: Data?
     nonisolated(unsafe) static var draftListResponseData: Data?
+    nonisolated(unsafe) static var draftCreateResponseData: Data?
+    nonisolated(unsafe) static var labelListResponseData: Data?
+    nonisolated(unsafe) static var profileResponseData: Data?
     nonisolated(unsafe) static var draftGetResponseData: Data?
     nonisolated(unsafe) static var draftUpdateResponseData: Data?
     nonisolated(unsafe) static var failAttachmentPayloadRequests = false
@@ -104,7 +107,16 @@ final class TestGmailRequestCaptureProtocol: URLProtocol {
         if method == "DELETE" {
             return Data()
         }
+        if path == "/gmail/v1/users/me/labels" {
+            return Self.labelListResponseData ?? Self.responseData
+        }
+        if path == "/gmail/v1/users/me/profile" {
+            return Self.profileResponseData ?? Self.responseData
+        }
         if path == "/gmail/v1/users/me/drafts" {
+            if method == "POST" {
+                return Self.draftCreateResponseData ?? Self.responseData
+            }
             return Self.draftListResponseData ?? Self.responseData
         }
         if path.hasPrefix("/gmail/v1/users/me/drafts/") {
@@ -160,6 +172,9 @@ final class TestGmailRequestCaptureProtocol: URLProtocol {
         messageGetResponseData = nil
         attachmentResponseData = nil
         draftListResponseData = nil
+        draftCreateResponseData = nil
+        labelListResponseData = nil
+        profileResponseData = nil
         draftGetResponseData = nil
         draftUpdateResponseData = nil
         failAttachmentPayloadRequests = false

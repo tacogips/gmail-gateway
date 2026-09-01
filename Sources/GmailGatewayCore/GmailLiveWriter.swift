@@ -76,6 +76,32 @@ struct GmailLiveWriter {
             rejectedAttachments: rejectedAttachments
         )
     }
+
+    /// Sends an existing provider draft (Gmail `drafts.send`). This is a send path, so it lives
+    /// with the other send operations and is reachable only through `gmail-gateway-sender`.
+    func sendDraft(
+        account: AccountConfig,
+        credential: CredentialConfig,
+        draftId: String
+    ) throws -> MailWriteResult {
+        let accessToken = try validGmailAccessToken(credential: credential, use: .draftSend)
+        let object = try postGmailJSONObject(
+            path: "/gmail/v1/users/me/drafts/send",
+            accessToken: accessToken,
+            body: ["id": draftId],
+            context: "Gmail draft send failed"
+        )
+        return MailWriteResult(
+            operation: GmailGatewayWriteOperation.sendDraft.rawValue,
+            accountId: account.id,
+            provider: account.provider.graphQLValue,
+            draftId: draftId,
+            messageId: object["id"] as? String,
+            threadId: object["threadId"] as? String,
+            status: "SENT",
+            rejectedAttachments: []
+        )
+    }
 }
 
 func buildRawMessage(from: String, input: OutboundMailInput, attachmentPaths: [String]) throws -> String {

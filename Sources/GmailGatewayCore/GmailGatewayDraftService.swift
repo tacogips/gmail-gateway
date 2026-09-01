@@ -126,6 +126,16 @@ extension GmailGatewayWriteService {
         ).graphQLObject()
     }
 
+    /// Sends an existing draft (Gmail `drafts.send`). Only `gmail-gateway-sender` exposes this.
+    public func sendDraft(accountId: String, draftId: String) throws -> [String: Any] {
+        let (account, credential) = try requireWritableAccount(accountId: accountId, operation: .sendDraft)
+        return try providerAdapter.sendDraft(
+            account: account,
+            credential: credential,
+            draftId: try requireDraftId(draftId)
+        ).graphQLObject()
+    }
+
     public func deleteDraft(accountId: String, draftId: String) throws -> [String: Any] {
         let (account, credential) = try requireWritableAccount(accountId: accountId, operation: .deleteDraft)
         return try providerAdapter.deleteDraft(

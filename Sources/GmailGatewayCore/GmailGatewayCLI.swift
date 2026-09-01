@@ -333,12 +333,16 @@ private func rootHelpText(mode: GmailGatewayCLIMode) -> String {
     case .reader:
         writeNote = """
           This binary is read-only. Write mutations are rejected with SEND_DISABLED_IN_READER.
+          Read surface: accounts, account, threads, thread, message, messageFileSet,
+          attachment, labels, and profile.
         """
     case .draftGateway:
         writeNote = """
-          This binary is draft-only. It supports the createDraft, updateDraft, and deleteDraft
-          mutations plus the drafts and draft queries, and it can never send mail.
-          sendMessage, replyMessage, and forwardMessage are rejected with
+          This binary is draft-only. It supports createDraft, createReplyDraft,
+          createForwardDraft, updateDraft, and deleteDraft, plus the drafts and draft
+          queries, and it can never send mail. createReplyDraft and createForwardDraft
+          prepare threaded reply and forward drafts without sending them.
+          sendMessage, replyMessage, forwardMessage, and sendDraft are rejected with
           SEND_DISABLED_IN_DRAFT_GATEWAY; use gmail-gateway-sender for those.
 
           updateDraft retains any header or body field it is not given. Supplying textBody
@@ -349,10 +353,11 @@ private func rootHelpText(mode: GmailGatewayCLIMode) -> String {
         """
     case .directSender:
         writeNote = """
-          This binary is the explicit sender. sendMessage directly sends mail through the provider.
-          replyMessage and forwardMessage directly send threaded replies and forwards.
-          It also supports the full draft surface: createDraft, updateDraft, deleteDraft,
-          and the drafts and draft queries.
+          This binary is the explicit sender. sendMessage directly sends mail through the provider,
+          replyMessage and forwardMessage directly send threaded replies and forwards, and
+          sendDraft sends a draft that gmail-gateway-draft already prepared.
+          It also supports the full draft surface: createDraft, createReplyDraft,
+          createForwardDraft, updateDraft, deleteDraft, and the drafts and draft queries.
         """
     }
 

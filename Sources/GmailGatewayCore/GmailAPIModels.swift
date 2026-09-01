@@ -61,3 +61,22 @@ struct GmailDraftListResponse: Decodable {
     let nextPageToken: String?
     let resultSizeEstimate: Int?
 }
+
+struct GmailLabelListResponse: Decodable {
+    let labels: [GmailAPILabel]?
+}
+
+struct GmailAPILabel: Decodable {
+    let id: String?
+    let name: String?
+    let type: String?
+    let messageListVisibility: String?
+    let labelListVisibility: String?
+}
+
+struct GmailProfileResponse: Decodable {
+    let emailAddress: String?
+    let messagesTotal: Int?
+    let threadsTotal: Int?
+    let historyId: String?
+}

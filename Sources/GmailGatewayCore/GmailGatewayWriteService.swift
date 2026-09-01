@@ -5,11 +5,13 @@ public enum GmailGatewayWriteOperation: String, Sendable {
     case updateDraft = "UPDATE_DRAFT"
     case deleteDraft = "DELETE_DRAFT"
     case readDraft = "READ_DRAFT"
+    case sendDraft = "SEND_DRAFT"
     case send = "SEND"
 
-    var isDraftOperation: Bool {
+    /// Whether the payload for this operation names the draft it acted on.
+    var reportsDraftId: Bool {
         switch self {
-        case .createDraft, .updateDraft, .deleteDraft, .readDraft:
+        case .createDraft, .updateDraft, .deleteDraft, .readDraft, .sendDraft:
             return true
         case .send:
             return false
@@ -26,6 +28,8 @@ public enum GmailGatewayWriteOperation: String, Sendable {
             return "deleteDraft"
         case .readDraft:
             return "draft"
+        case .sendDraft:
+            return "sendDraft"
         case .send:
             return "sendMessage"
         }
@@ -41,6 +45,8 @@ public enum GmailGatewayWriteOperation: String, Sendable {
             return "deleting Gmail drafts"
         case .readDraft:
             return "reading Gmail drafts"
+        case .sendDraft:
+            return "sending Gmail drafts"
         case .send:
             return "sending Gmail messages"
         }
