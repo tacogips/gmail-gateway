@@ -318,3 +318,44 @@ struct MailProfile: Codable {
         ]
     }
 }
+
+struct MailboxMutationResult: Codable {
+    let operation: String
+    let accountId: String
+    let provider: String
+    let status: String
+    var threadId: String?
+    var messageId: String?
+    var messageIds: [String]?
+    var labelId: String?
+    var label: MailLabel?
+    var labelIds: [String]?
+
+    func graphQLObject() -> [String: Any] {
+        var object: [String: Any] = [
+            "operation": operation,
+            "accountId": accountId,
+            "provider": provider,
+            "status": status
+        ]
+        if let threadId {
+            object["threadId"] = threadId
+        }
+        if let messageId {
+            object["messageId"] = messageId
+        }
+        if let messageIds {
+            object["messageIds"] = messageIds
+        }
+        if let labelId {
+            object["labelId"] = labelId
+        }
+        if let label {
+            object["label"] = label.graphQLObject()
+        }
+        if let labelIds {
+            object["labelIds"] = labelIds
+        }
+        return object
+    }
+}

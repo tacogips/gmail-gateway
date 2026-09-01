@@ -141,19 +141,14 @@ struct GmailGatewayDoctor {
         _ credential: CredentialConfig,
         issues: inout [[String: Any]]
     ) -> [String: Any] {
-        let requiredAccessMode: AccessMode
-        switch mode {
-        case .reader:
-            requiredAccessMode = .read
-        case .draftGateway, .directSender:
-            requiredAccessMode = .readSend
-        }
-        let accessModeReady = requiredAccessMode == .read || credential.accessMode == .readSend
-        if !accessModeReady {
+        let accessModeReady = mode.requiredCapability.map { credential.accessMode.grants($0) } ?? true
+        if let capability = mode.requiredCapability,
+           !accessModeReady {
+            let accepted = AccessMode.modesGranting(capability).map(\.rawValue).joined(separator: " or ")
             issues.append(issue(
                 category: "CONFIGURATION",
                 code: "ACCESS_MODE_INSUFFICIENT",
-                message: "Credential \(credential.id) requires read_send access for \(mode.executableName)",
+                message: "Credential \(credential.id) requires \(accepted) access for \(mode.executableName)",
                 credentialId: credential.id
             ))
         }
@@ -203,7 +198,9 @@ struct GmailGatewayDoctor {
             "id": credential.id,
             "provider": credential.provider.rawValue,
             "configuredAccessMode": credential.accessMode.rawValue,
-            "requiredAccessMode": requiredAccessMode.rawValue,
+            "requiredCapability": mode.requiredCapability?.rawValue as Any? ?? NSNull(),
+            "acceptedAccessModes": mode.requiredCapability
+                .map { AccessMode.modesGranting($0).map(\.rawValue) } ?? AccessMode.allRawValues,
             "accessModeReady": accessModeReady,
             "oauthClient": [
                 "ready": oauthReady,

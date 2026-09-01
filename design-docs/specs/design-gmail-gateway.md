@@ -12,6 +12,8 @@ Phase 2 adds:
 
 - `gmail-gateway-draft`: read access plus the outbound draft lifecycle (create, update, delete, read); it can never send mail
 - `gmail-gateway-sender`: explicit direct-send access to configured mail accounts, including the draft lifecycle
+- `gmail-gateway-threads`: mailbox mutation (label changes, trash/untrash, label management, permanent delete); it never composes, sends, or ingests
+- `gmail-gateway-message-box`: ingestion of existing RFC 822 mail through `importMessage` and `insertMessage`; it never sends
 
 All business operations are exposed through GraphQL. The CLI surface exists only for bootstrapping, configuration validation, authentication setup, cache maintenance, and GraphQL transport.
 
@@ -45,6 +47,8 @@ All business operations are exposed through GraphQL. The CLI surface exists only
 | `gmail-gateway-reader` | Yes | No | `Query` only, plus local-cache side effects such as attachment materialization |
 | `gmail-gateway-draft` | Planned for Phase 2 | No, never | `Query`, draft `Query` (`drafts`, `draft`), and the draft lifecycle `Mutation` (`createDraft`, `createReplyDraft`, `createForwardDraft`, `updateDraft`, `deleteDraft`) |
 | `gmail-gateway-sender` | Planned for Phase 2 | Yes, explicit direct send plus `sendDraft` | `Query`, draft `Query`, direct-send `Mutation`, and the draft lifecycle `Mutation` |
+| `gmail-gateway-threads` | Yes | No | `Query` plus the mailbox-mutation `Mutation`: label changes, trash/untrash, label management, and permanent delete |
+| `gmail-gateway-message-box` | Yes | No | `Query` plus the ingestion `Mutation`: `importMessage` and `insertMessage` |
 
 `gmail-gateway-reader` must fail fast if a send mutation is submitted. The current CLI GraphQL executor enforces this by rejecting write root fields before resolver dispatch with `SEND_DISABLED_IN_READER`; it does not yet expose a separate reduced GraphQL schema.
 
@@ -558,23 +562,93 @@ Reply and forward workflows are provided by the dedicated `replyMessage` and
 - provider-assigned message ID and thread ID
 - rejected attachment paths with reasons if partial validation fails before send
 
+### Mailbox Mutation Semantics
+
+`gmail-gateway-threads` owns every operation that changes stored mail. It never composes,
+sends, or ingests, and the other binaries reject its mutations with
+`MAILBOX_MUTATION_NOT_SUPPORTED`.
+
+```graphql
+type MailboxMutation {
+  modifyThreadLabels(accountId: ID!, threadId: ID!, addLabelIds: [String!], removeLabelIds: [String!]): MailboxMutationPayload!
+  modifyMessageLabels(accountId: ID!, messageId: ID!, addLabelIds: [String!], removeLabelIds: [String!]): MailboxMutationPayload!
+  batchModifyMessageLabels(accountId: ID!, messageIds: [ID!]!, addLabelIds: [String!], removeLabelIds: [String!]): MailboxMutationPayload!
+  trashThread(accountId: ID!, threadId: ID!): MailboxMutationPayload!
+  untrashThread(accountId: ID!, threadId: ID!): MailboxMutationPayload!
+  trashMessage(accountId: ID!, messageId: ID!): MailboxMutationPayload!
+  untrashMessage(accountId: ID!, messageId: ID!): MailboxMutationPayload!
+  deleteThread(accountId: ID!, threadId: ID!): MailboxMutationPayload!
+  deleteMessage(accountId: ID!, messageId: ID!): MailboxMutationPayload!
+  batchDeleteMessages(accountId: ID!, messageIds: [ID!]!): MailboxMutationPayload!
+  createLabel(accountId: ID!, name: String!, messageListVisibility: String, labelListVisibility: String): MailboxMutationPayload!
+  updateLabel(accountId: ID!, labelId: ID!, name: String, messageListVisibility: String, labelListVisibility: String): MailboxMutationPayload!
+  deleteLabel(accountId: ID!, labelId: ID!): MailboxMutationPayload!
+}
+
+type MailboxMutationPayload {
+  operation: String!
+  accountId: ID!
+  provider: String!
+  status: String!
+  threadId: ID
+  messageId: ID
+  messageIds: [ID!]
+  labelId: ID
+  label: MailLabel
+  labelIds: [String!]
+}
+```
+
+- a label change must name at least one `addLabelIds` or `removeLabelIds` value; an empty
+  change is rejected before the provider call rather than sent as a no-op
+- `modifyThreadLabels` reports the union of the resulting labels across the thread's
+  messages, because the provider returns the modified thread rather than a thread-level
+  label list
+- `updateLabel` patches rather than replaces, so an update that names only `name` leaves
+  the visibility settings untouched
+- `deleteThread`, `deleteMessage`, and `batchDeleteMessages` are irreversible and bypass
+  Trash. They require the `full` access mode, because the provider accepts only its
+  full-access scope for them. `trashThread` and `trashMessage` are the reversible path and
+  need only `read_modify`.
+
+### Mail Ingestion Semantics
+
+`gmail-gateway-message-box` adds existing RFC 822 mail to the mailbox without sending it.
+The other binaries reject its mutations with `MAIL_INGEST_NOT_SUPPORTED`.
+
+```graphql
+type IngestMutation {
+  importMessage(input: MailboxIngestInput!): MailboxMutationPayload!
+  insertMessage(input: MailboxIngestInput!): MailboxMutationPayload!
+}
+
+input MailboxIngestInput {
+  accountId: ID!
+  rfc822Path: String!            # must resolve under storage.allowed_send_attachment_roots
+  labelIds: [String!]
+  internalDateSource: String     # RECEIVED_TIME or DATE_HEADER
+  neverMarkSpam: Boolean         # importMessage only
+  processForCalendar: Boolean    # importMessage only
+  deleted: Boolean
+}
+```
+
+- `importMessage` runs the normal delivery pipeline, so it accepts `neverMarkSpam` and
+  `processForCalendar`; `insertMessage` is a direct IMAP-APPEND-style add that bypasses
+  most scanning, and those two flags are not sent for it
+- the source is named by local path, never inlined, and is validated against the same
+  allowed roots that outbound attachments use, so ingestion cannot read arbitrary files
+
 ### Deliberately Unmapped Provider Surface
 
-The Gmail API exposes more than the three binaries model. The following are intentionally
-not mapped, because they do not fit the read / draft / send split and would require a new
-capability decision rather than an addition to an existing binary:
+The following remain unmapped, because they do not fit any binary's charter and would
+require a new capability decision rather than an addition to an existing binary:
 
-- mailbox mutation: `messages.modify`, `messages.trash`, `messages.untrash`,
-  `messages.delete`, `messages.batchModify`, `messages.batchDelete`, and the equivalent
-  `threads.*` mutations, plus `labels.create`, `labels.update`, `labels.patch`,
-  `labels.delete`. These change stored mail rather than reading it, drafting it, or
-  sending it, so they belong to a mailbox-management capability that does not exist yet.
 - mailbox administration: every `users.settings.*` resource (vacation, IMAP, POP,
   language, filters, delegates, forwarding addresses, send-as identities, S/MIME, CSE).
 - `history.list`, which belongs with the Phase 3 incremental-sync cache.
 - `users.watch` and `users.stop`, which require the long-running `serve` mode that Phase 1
   explicitly excludes.
-- `messages.import` and `messages.insert`, which ingest mail rather than compose it.
 
 ## Attachment Handling
 
@@ -673,6 +747,19 @@ These commands exist because they are environment bootstrapping tasks, not mail-
 
 ## Errors and Observability
 
+### Access Modes
+
+| Access mode | Scopes | Capabilities |
+|-------------|--------|--------------|
+| `read` | `gmail.readonly` | read |
+| `read_send` | `gmail.readonly`, `gmail.compose`, `gmail.send` | read, send |
+| `read_modify` | `gmail.readonly`, `gmail.modify`, `gmail.insert` | read, modify, insert |
+| `full` | `https://mail.google.com/` | read, send, modify, insert, permanent delete |
+
+The capability model is deliberately not a ladder: `read_send` does not grant modify and
+`read_modify` does not grant send, so neither can stand in for the other. Only `full` grants
+permanent delete, and only because the provider accepts no narrower scope for it.
+
 ### Error Model
 
 GraphQL errors should be structured with machine-readable extension codes:
@@ -690,6 +777,10 @@ GraphQL errors should be structured with machine-readable extension codes:
 - `SEND_DISABLED_IN_READER`
 - `SEND_DISABLED_IN_DRAFT_GATEWAY`
 - `DRAFT_NOT_FOUND`
+- `LABEL_NOT_FOUND`
+- `MAILBOX_MUTATION_NOT_SUPPORTED`
+- `MAIL_INGEST_NOT_SUPPORTED`
+- `ACCESS_MODE_INSUFFICIENT`
 - `CONFIG_INVALID`
 - `UNEXPECTED_ERROR`
 
@@ -702,6 +793,12 @@ GraphQL errors should be structured with machine-readable extension codes:
 
 ## Security Constraints
 
+- a credential's `access_mode` decides which capabilities it holds and the binary decides
+  which it exposes; both must allow an operation. `read_send` cannot mutate stored mail and
+  `read_modify` cannot send, so a credential scoped for one workflow cannot be borrowed for
+  the other
+- permanent delete is reachable only with the `full` access mode through
+  `gmail-gateway-threads`, and only through the three explicitly named delete mutations
 - the reader binary must not expose write resolvers
 - direct send resolvers (`sendMessage`, `replyMessage`, `forwardMessage`) must be reachable
   only through `gmail-gateway-sender`; `gmail-gateway-draft` rejects them before any provider

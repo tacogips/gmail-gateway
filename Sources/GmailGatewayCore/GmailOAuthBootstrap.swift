@@ -504,6 +504,18 @@ private func gmailScopes(accessMode: AccessMode) -> [String] {
             "https://www.googleapis.com/auth/gmail.compose",
             "https://www.googleapis.com/auth/gmail.send"
         ]
+    case .readModify:
+        // gmail.modify covers label mutation, trash, and untrash; gmail.insert covers
+        // import and insert. Neither covers permanent delete, which needs .full.
+        return [
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.insert"
+        ]
+    case .full:
+        // Permanent delete (messages.delete, threads.delete, messages.batchDelete) accepts
+        // only the full-access scope.
+        return ["https://mail.google.com/"]
     }
 }
 

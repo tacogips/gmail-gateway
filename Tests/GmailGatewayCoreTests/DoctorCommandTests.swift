@@ -167,5 +167,9 @@ private func modeName(_ mode: GmailGatewayCLIMode) -> String {
         return "gmail-gateway-draft"
     case .directSender:
         return "gmail-gateway-sender"
+    case .mailboxThreads:
+        return "gmail-gateway-threads"
+    case .messageBox:
+        return "gmail-gateway-message-box"
     }
 }

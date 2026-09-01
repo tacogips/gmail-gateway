@@ -32,6 +32,9 @@ enum GmailAccessTokenUse {
     case draftDelete
     case draftSend
     case directSend
+    case mailboxModify
+    case mailboxDelete
+    case mailIngest
 
     var missingAuthMessage: String {
         switch self {
@@ -49,6 +52,12 @@ enum GmailAccessTokenUse {
             return "Authentication is required before sending Gmail drafts"
         case .directSend:
             return "Authentication is required before sending Gmail messages"
+        case .mailboxModify:
+            return "Authentication is required before modifying stored Gmail mail"
+        case .mailboxDelete:
+            return "Authentication is required before permanently deleting Gmail mail"
+        case .mailIngest:
+            return "Authentication is required before importing Gmail messages"
         }
     }
 
@@ -56,7 +65,8 @@ enum GmailAccessTokenUse {
         switch self {
         case .read:
             return .bestEffort
-        case .draftRead, .draftCreation, .draftUpdate, .draftDelete, .draftSend, .directSend:
+        case .draftRead, .draftCreation, .draftUpdate, .draftDelete, .draftSend, .directSend,
+             .mailboxModify, .mailboxDelete, .mailIngest:
             return .required
         }
     }

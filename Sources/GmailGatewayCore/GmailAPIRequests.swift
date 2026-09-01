@@ -65,9 +65,17 @@ func postGmailJSONObject(
     path: String,
     accessToken: String,
     body: [String: Any],
-    context: String
+    context: String,
+    queryItems: [URLQueryItem] = []
 ) throws -> [String: Any] {
-    try gmailJSONObject(method: "POST", path: path, accessToken: accessToken, body: body, context: context)
+    try gmailJSONObject(
+        method: "POST",
+        path: path,
+        accessToken: accessToken,
+        body: body,
+        context: context,
+        queryItems: queryItems
+    )
 }
 
 func putGmailJSONObject(
@@ -77,6 +85,27 @@ func putGmailJSONObject(
     context: String
 ) throws -> [String: Any] {
     try gmailJSONObject(method: "PUT", path: path, accessToken: accessToken, body: body, context: context)
+}
+
+func patchGmailJSONObject(
+    path: String,
+    accessToken: String,
+    body: [String: Any],
+    context: String
+) throws -> [String: Any] {
+    try gmailJSONObject(method: "PATCH", path: path, accessToken: accessToken, body: body, context: context)
+}
+
+/// POSTs a JSON body to an endpoint that answers with an empty body (Gmail batch mutations).
+func postGmailJSONNoContent(
+    path: String,
+    accessToken: String,
+    body: [String: Any],
+    context: String
+) throws {
+    var request = try gmailJSONRequest(method: "POST", path: path, accessToken: accessToken)
+    request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+    _ = try performGmailHTTPRequest(request, context: context)
 }
 
 func deleteGmailResource(
@@ -94,9 +123,15 @@ private func gmailJSONObject(
     path: String,
     accessToken: String,
     body: [String: Any],
-    context: String
+    context: String,
+    queryItems: [URLQueryItem] = []
 ) throws -> [String: Any] {
-    var request = try gmailJSONRequest(method: method, path: path, accessToken: accessToken)
+    var request = try gmailJSONRequest(
+        method: method,
+        path: path,
+        accessToken: accessToken,
+        queryItems: queryItems
+    )
     request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
     let response = try performGmailHTTPRequest(request, context: context)
     guard let object = try JSONSerialization.jsonObject(with: response.data) as? [String: Any] else {
@@ -112,9 +147,12 @@ private func gmailJSONObject(
 private func gmailJSONRequest(
     method: String,
     path: String,
-    accessToken: String
+    accessToken: String,
+    queryItems: [URLQueryItem] = []
 ) throws -> URLRequest {
-    guard let url = gmailURLComponents(path: path).url else {
+    var components = gmailURLComponents(path: path)
+    components.queryItems = queryItems.isEmpty ? nil : queryItems
+    guard let url = components.url else {
         throw GmailGatewayError(
             "Failed to construct Gmail API URL",
             code: .providerApiError,

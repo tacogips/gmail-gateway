@@ -11,23 +11,34 @@ mise run test
 swift run gmail-gateway-reader --help
 swift run gmail-gateway-draft --help
 swift run gmail-gateway-sender --help
+swift run gmail-gateway-threads --help
+swift run gmail-gateway-message-box --help
 ```
 
 The package uses Swift Package Manager with:
 
 - Library target: `GmailGatewayCore`
-- Executable targets: `GmailGatewayReader`, `GmailGatewayDraft`, `GmailGatewaySender`
-- Installed executables: `gmail-gateway-reader`, `gmail-gateway-draft`, `gmail-gateway-sender`
+- Executable targets: `GmailGatewayReader`, `GmailGatewayDraft`, `GmailGatewaySender`,
+  `GmailGatewayThreads`, `GmailGatewayMessageBox`
+- Installed executables: `gmail-gateway-reader`, `gmail-gateway-draft`, `gmail-gateway-sender`,
+  `gmail-gateway-threads`, `gmail-gateway-message-box`
 
 ## Binary Capabilities
 
 Each binary exposes a strictly separate slice of the GraphQL surface:
 
-| Binary | Reads | Drafts | Sends |
-|--------|-------|--------|-------|
-| `gmail-gateway-reader` | `accounts`, `account`, `threads`, `thread`, `message`, `messageFileSet`, `attachment`, `labels`, `profile` | No | No |
-| `gmail-gateway-draft` | Same reads | `createDraft`, `createReplyDraft`, `createForwardDraft`, `updateDraft`, `deleteDraft`, `drafts`, `draft` | No, never |
-| `gmail-gateway-sender` | Same reads | Same draft surface as the draft binary | `sendMessage`, `replyMessage`, `forwardMessage`, `sendDraft` |
+All five binaries share one read surface: `accounts`, `account`, `threads`, `thread`,
+`message`, `messageFileSet`, `attachment`, `labels`, and `profile`. Each then owns exactly
+one group of mutations, and rejects every other group with an error naming the binary that
+owns it.
+
+| Binary | Owns | Access mode |
+|--------|------|-------------|
+| `gmail-gateway-reader` | Nothing; reads only | `read` |
+| `gmail-gateway-draft` | `createDraft`, `createReplyDraft`, `createForwardDraft`, `updateDraft`, `deleteDraft`, `drafts`, `draft` | `read_send` |
+| `gmail-gateway-sender` | `sendMessage`, `replyMessage`, `forwardMessage`, `sendDraft`, plus the whole draft surface | `read_send` |
+| `gmail-gateway-threads` | Mailbox mutation: label changes, trash/untrash, label management, permanent delete | `read_modify` (`full` for permanent delete) |
+| `gmail-gateway-message-box` | Mail ingestion: `importMessage`, `insertMessage` | `read_modify` |
 
 Send mutations submitted to `gmail-gateway-draft` are rejected with
 `SEND_DISABLED_IN_DRAFT_GATEWAY` before any provider call, so the draft binary has no
@@ -119,6 +130,78 @@ name contains hyphens, keep `PROJECT_NAME` and `EXECUTABLE_NAME` hyphenated as
 needed, but use identifier-safe values such as `GmailGatewayCore` and
 `GmailGatewayReader` for Swift module/type variables.
 
+## Access Modes
+
+A credential's `access_mode` decides which capabilities it holds; the binary decides which
+it exposes. Both must allow an operation for it to run.
+
+| Access mode | Scopes | Grants |
+|-------------|--------|--------|
+| `read` | `gmail.readonly` | read |
+| `read_send` | `gmail.readonly`, `gmail.compose`, `gmail.send` | read, send |
+| `read_modify` | `gmail.readonly`, `gmail.modify`, `gmail.insert` | read, modify, insert |
+| `full` | `https://mail.google.com/` | read, send, modify, insert, permanent delete |
+
+`read_send` cannot mutate stored mail and `read_modify` cannot send, so a credential scoped
+for one workflow cannot be borrowed for the other.
+
+**Permanent delete requires `full`.** `deleteThread`, `deleteMessage`, and
+`batchDeleteMessages` are irreversible, bypass Trash, and cannot be undone; Gmail accepts
+only its full-access scope for them. Prefer `trashThread` and `trashMessage`, which are
+reversible with `untrashThread` and `untrashMessage` and need only `read_modify`.
+
+## Mailbox Mutation
+
+`gmail-gateway-threads` changes stored mail and never composes, sends, or ingests it:
+
+```bash
+# Move a thread out of the inbox and tag it, in one call
+swift run gmail-gateway-threads graphql --query '
+mutation {
+  modifyThreadLabels(input: {
+    accountId: "personal",
+    threadId: "1930f0c2b1a4d5e6",
+    addLabelIds: ["Label_9"],
+    removeLabelIds: ["INBOX"]
+  }) { operation status threadId labelIds }
+}'
+
+# Reversible removal
+swift run gmail-gateway-threads graphql --query '
+mutation { trashMessage(input: { accountId: "personal", messageId: "1930f0c2b1a4d5e6" }) { status messageId } }'
+
+# Label management
+swift run gmail-gateway-threads graphql --query '
+mutation { createLabel(input: { accountId: "personal", name: "Receipts", labelListVisibility: "labelShow" }) { labelId label { name } } }'
+```
+
+`updateLabel` patches rather than replaces, so naming only `name` leaves the visibility
+settings untouched.
+
+## Mail Ingestion
+
+`gmail-gateway-message-box` adds existing RFC 822 mail to the mailbox without sending it.
+`rfc822Path` must resolve under a configured `storage.allowed_send_attachment_roots` entry,
+the same rule outbound attachments follow.
+
+```bash
+# Runs the normal delivery pipeline; accepts neverMarkSpam and processForCalendar
+swift run gmail-gateway-message-box graphql --query '
+mutation {
+  importMessage(input: {
+    accountId: "personal",
+    rfc822Path: "/allowed/send/root/archived.eml",
+    labelIds: ["INBOX"],
+    internalDateSource: DATE_HEADER,
+    neverMarkSpam: true
+  }) { operation status messageId threadId }
+}'
+
+# Direct IMAP-APPEND-style add that bypasses most scanning
+swift run gmail-gateway-message-box graphql --query '
+mutation { insertMessage(input: { accountId: "personal", rfc822Path: "/allowed/send/root/archived.eml" }) { status messageId } }'
+```
+
 ## Homebrew Formula
 
 Build local formula archives:
@@ -146,6 +229,8 @@ brew tap tacogips/tap
 brew install gmail-gateway-reader
 brew install gmail-gateway-draft
 brew install gmail-gateway-sender
+brew install gmail-gateway-threads
+brew install gmail-gateway-message-box
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.

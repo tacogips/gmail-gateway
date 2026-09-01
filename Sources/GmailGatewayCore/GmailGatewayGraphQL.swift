@@ -16,6 +16,8 @@ func executeReaderGraphQL(
 private let writeMutationRootFields = sendMutationRootFields + draftMutationRootFields
 
 private func executeReaderGraphQLData(service: GmailGatewayService, query: String) throws -> [String: Any] {
+    try rejectMailboxMutations(query: query, executableName: "gmail-gateway-reader")
+    try rejectIngestMutations(query: query, executableName: "gmail-gateway-reader")
     if writeMutationRootFields.contains(where: { rootFieldSource($0, in: query) != nil }) {
         throw GmailGatewayError(
             "Mail write mutations are disabled in gmail-gateway-reader",
@@ -103,6 +105,9 @@ public func executeWriteGraphQL(
     let service = GmailGatewayService(config: config)
     do {
         let scannedQuery = try prepareGraphQLQuery(query)
+        let executableName = mode == .directSend ? "gmail-gateway-sender" : "gmail-gateway-draft"
+        try rejectMailboxMutations(query: scannedQuery, executableName: executableName)
+        try rejectIngestMutations(query: scannedQuery, executableName: executableName)
         try rejectSendMutationsOutsideSender(query: scannedQuery, mode: mode)
         if let data = try executeDraftMutation(config: config, query: scannedQuery) {
             return (["data": data], .success)
@@ -166,6 +171,74 @@ public func executeWriteGraphQL(
     } catch let error as GmailGatewayError where shouldReturnGraphQLError(error) {
         return (graphQLErrorBody(error), .graphqlExecutionError)
     }
+}
+
+/// `gmail-gateway-threads`: reads plus mailbox mutation. It never composes, sends, or ingests.
+public func executeMailboxGraphQL(
+    config: GmailGatewayConfig,
+    query: String
+) throws -> (body: [String: Any], exitCode: GmailGatewayExitCode) {
+    try executeRestrictedMutationGraphQL(
+        config: config,
+        query: query,
+        executableName: "gmail-gateway-threads",
+        rejectOtherGroups: { scannedQuery in
+            try rejectIngestMutations(query: scannedQuery, executableName: "gmail-gateway-threads")
+            try rejectComposeMutations(query: scannedQuery, executableName: "gmail-gateway-threads")
+        },
+        execute: executeMailboxMutation
+    )
+}
+
+/// `gmail-gateway-message-box`: reads plus mail ingestion. It never composes, sends, or mutates
+/// stored mail.
+public func executeMessageBoxGraphQL(
+    config: GmailGatewayConfig,
+    query: String
+) throws -> (body: [String: Any], exitCode: GmailGatewayExitCode) {
+    try executeRestrictedMutationGraphQL(
+        config: config,
+        query: query,
+        executableName: "gmail-gateway-message-box",
+        rejectOtherGroups: { scannedQuery in
+            try rejectMailboxMutations(query: scannedQuery, executableName: "gmail-gateway-message-box")
+            try rejectComposeMutations(query: scannedQuery, executableName: "gmail-gateway-message-box")
+        },
+        execute: executeIngestMutation
+    )
+}
+
+private func executeRestrictedMutationGraphQL(
+    config: GmailGatewayConfig,
+    query: String,
+    executableName: String,
+    rejectOtherGroups: (String) throws -> Void,
+    execute: (GmailGatewayConfig, String) throws -> [String: Any]?
+) throws -> (body: [String: Any], exitCode: GmailGatewayExitCode) {
+    let service = GmailGatewayService(config: config)
+    do {
+        let scannedQuery = try prepareGraphQLQuery(query)
+        try rejectOtherGroups(scannedQuery)
+        if let data = try execute(config, scannedQuery) {
+            return (["data": data], .success)
+        }
+        return (["data": try executeReaderGraphQLData(service: service, query: scannedQuery)], .success)
+    } catch let error as GmailGatewayError where shouldReturnGraphQLError(error) {
+        return (graphQLErrorBody(error), .graphqlExecutionError)
+    }
+}
+
+/// Draft and send mutations are compose operations; the mailbox and ingest binaries have neither.
+private func rejectComposeMutations(query: String, executableName: String) throws {
+    guard let field = writeMutationRootFields.first(where: { rootFieldSource($0, in: query) != nil }) else {
+        return
+    }
+    let owner = sendMutationRootFields.contains(field) ? "gmail-gateway-sender" : "gmail-gateway-draft"
+    throw GmailGatewayError(
+        "\(field) is not available in \(executableName); use \(owner) for draft and send mutations",
+        code: .sendDisabledInReader,
+        exitCode: .graphqlExecutionError
+    )
 }
 
 private func shouldReturnGraphQLError(_ error: GmailGatewayError) -> Bool {

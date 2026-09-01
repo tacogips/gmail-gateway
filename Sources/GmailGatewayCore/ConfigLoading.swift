@@ -602,7 +602,9 @@ private func readProvider(_ value: Any?, _ context: String) throws -> MailProvid
 private func readAccessMode(_ value: Any?, _ context: String) throws -> AccessMode {
     let raw = value == nil ? "read" : try readString(value, context)
     guard let parsed = AccessMode(rawValue: raw) else {
-        throw configError("\(context) must be \"read\" or \"read_send\"")
+        throw configError(
+            "\(context) must be one of \"read\", \"read_send\", \"read_modify\", or \"full\""
+        )
     }
     return parsed
 }

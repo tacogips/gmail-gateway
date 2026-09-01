@@ -2,6 +2,8 @@ homebrew_products=(
   "gmail-gateway-reader"
   "gmail-gateway-draft"
   "gmail-gateway-sender"
+  "gmail-gateway-threads"
+  "gmail-gateway-message-box"
 )
 
 homebrew_product_list() {
@@ -38,6 +40,8 @@ homebrew_formula_class() {
     gmail-gateway-reader) printf '%s\n' "GmailGatewayReader" ;;
     gmail-gateway-draft) printf '%s\n' "GmailGatewayDraft" ;;
     gmail-gateway-sender) printf '%s\n' "GmailGatewaySender" ;;
+    gmail-gateway-threads) printf '%s\n' "GmailGatewayThreads" ;;
+    gmail-gateway-message-box) printf '%s\n' "GmailGatewayMessageBox" ;;
     *)
       validate_homebrew_product "$1"
       ;;
@@ -49,6 +53,8 @@ homebrew_formula_desc() {
     gmail-gateway-reader) printf '%s\n' "Read-only Gmail workflow gateway" ;;
     gmail-gateway-draft) printf '%s\n' "Draft-writing Gmail workflow gateway" ;;
     gmail-gateway-sender) printf '%s\n' "Direct-send Gmail workflow gateway" ;;
+    gmail-gateway-threads) printf '%s\n' "Mailbox-mutating Gmail workflow gateway" ;;
+    gmail-gateway-message-box) printf '%s\n' "Mail-ingesting Gmail workflow gateway" ;;
     *)
       validate_homebrew_product "$1"
       ;;

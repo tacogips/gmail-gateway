@@ -4,6 +4,8 @@ public enum GmailGatewayCLIMode: Sendable {
     case reader
     case draftGateway
     case directSender
+    case mailboxThreads
+    case messageBox
 
     var executableName: String {
         switch self {
@@ -13,6 +15,24 @@ public enum GmailGatewayCLIMode: Sendable {
             return "gmail-gateway-draft"
         case .directSender:
             return "gmail-gateway-sender"
+        case .mailboxThreads:
+            return "gmail-gateway-threads"
+        case .messageBox:
+            return "gmail-gateway-message-box"
+        }
+    }
+
+    /// The capability this binary needs beyond reading. Nil for the read-only binary.
+    var requiredCapability: MailboxCapability? {
+        switch self {
+        case .reader:
+            return nil
+        case .draftGateway, .directSender:
+            return .send
+        case .mailboxThreads:
+            return .modify
+        case .messageBox:
+            return .insert
         }
     }
 }
@@ -175,6 +195,10 @@ public struct GmailGatewayCLI {
             result = try executeWriteGraphQL(config: config, query: query, mode: .draftDefault)
         case .directSender:
             result = try executeWriteGraphQL(config: config, query: query, mode: .directSend)
+        case .mailboxThreads:
+            result = try executeMailboxGraphQL(config: config, query: query)
+        case .messageBox:
+            result = try executeMessageBoxGraphQL(config: config, query: query)
         }
         return GmailGatewayCommandResult(
             exitCode: result.exitCode.rawValue,
@@ -358,6 +382,38 @@ private func rootHelpText(mode: GmailGatewayCLIMode) -> String {
           sendDraft sends a draft that gmail-gateway-draft already prepared.
           It also supports the full draft surface: createDraft, createReplyDraft,
           createForwardDraft, updateDraft, deleteDraft, and the drafts and draft queries.
+        """
+    case .mailboxThreads:
+        writeNote = """
+          This binary mutates stored mail and never composes, sends, or ingests it.
+          Label changes:  modifyThreadLabels, modifyMessageLabels, batchModifyMessageLabels
+          Trash:          trashThread, untrashThread, trashMessage, untrashMessage
+          Label managing: createLabel, updateLabel, deleteLabel
+          Permanent:      deleteThread, deleteMessage, batchDeleteMessages
+
+          Trash and label mutations need the read_modify access mode. The three permanent
+          delete mutations are irreversible, bypass Trash, and need the full access mode,
+          because the provider accepts only its full-access scope for them. Prefer
+          trashThread and trashMessage unless a caller truly means to destroy mail.
+
+          Draft, send, and ingest mutations are rejected here; use gmail-gateway-draft,
+          gmail-gateway-sender, or gmail-gateway-message-box.
+        """
+    case .messageBox:
+        writeNote = """
+          This binary ingests existing RFC 822 mail into the mailbox and never composes,
+          sends, or mutates stored mail. It supports importMessage and insertMessage, and
+          needs the read_modify access mode.
+
+          importMessage runs the normal delivery pipeline (spam classification, Calendar
+          processing) and accepts neverMarkSpam and processForCalendar. insertMessage is a
+          direct IMAP-APPEND-style add that bypasses most scanning. Neither sends mail.
+
+          rfc822Path must resolve under a configured storage.allowed_send_attachment_roots
+          entry, the same rule outbound attachments follow.
+
+          Draft, send, and mailbox mutations are rejected here; use gmail-gateway-draft,
+          gmail-gateway-sender, or gmail-gateway-threads.
         """
     }
 

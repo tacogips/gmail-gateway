@@ -30,6 +30,8 @@ func runSmokeTests() throws {
     try testSenderRoutesSendMessageToDirectSend(cleanup: &cleanup)
     try testSenderRoutesSendDraftToDirectSend(cleanup: &cleanup)
     try testReaderExposesLabelAndProfileReads(cleanup: &cleanup)
+    try testThreadsBinaryOwnsMailboxMutations(cleanup: &cleanup)
+    try testMessageBoxBinaryOwnsMailIngestion(cleanup: &cleanup)
     try testSenderAlsoRoutesCreateDraft(cleanup: &cleanup)
     try testMissingDefaultAuthThreadsGraphQLError(cleanup: &cleanup)
     try testInvalidInlineVariables(cleanup: &cleanup)
@@ -517,6 +519,113 @@ func testReaderExposesLabelAndProfileReads(cleanup: inout [String]) throws {
             "reader mailbox metadata should fail on missing auth rather than an unknown field"
         )
     }
+}
+
+func testThreadsBinaryOwnsMailboxMutations(cleanup: inout [String]) throws {
+    let fixture = try trackedFixture(cleanup: &cleanup)
+    let threadsHelp = runCli(["--help"], mode: .mailboxThreads)
+    try assert(threadsHelp.stdout.contains("gmail-gateway-threads"), "threads help should name its executable")
+    try assert(threadsHelp.stdout.contains("irreversible"), "threads help should warn about permanent delete")
+
+    // The mutation is owned here, so it must reach the credential check rather than schema dispatch.
+    let owned = runCli([
+        "graphql",
+        "--config", fixture.configPath,
+        "--query", trashMessageMutation()
+    ], mode: .mailboxThreads)
+    try assert(
+        owned.exitCode == GmailGatewayExitCode.graphqlExecutionError.rawValue,
+        "threads mutation should stop before the provider call"
+    )
+    try assert(
+        !owned.stdout.contains("MAILBOX_MUTATION_NOT_SUPPORTED"),
+        "threads binary must not reject its own mutations"
+    )
+
+    for mode in [GmailGatewayCLIMode.reader, .draftGateway, .directSender, .messageBox] {
+        let result = runCli([
+            "graphql",
+            "--config", fixture.configPath,
+            "--query", trashMessageMutation()
+        ], mode: mode)
+        try assert(
+            result.stdout.contains("MAILBOX_MUTATION_NOT_SUPPORTED"),
+            "mailbox mutations should be rejected outside gmail-gateway-threads"
+        )
+        try assert(
+            result.stdout.contains("gmail-gateway-threads"),
+            "the rejection should name the binary that owns mailbox mutations"
+        )
+    }
+}
+
+func testMessageBoxBinaryOwnsMailIngestion(cleanup: inout [String]) throws {
+    let fixture = try trackedFixture(cleanup: &cleanup)
+    let messageBoxHelp = runCli(["--help"], mode: .messageBox)
+    try assert(
+        messageBoxHelp.stdout.contains("gmail-gateway-message-box"),
+        "message-box help should name its executable"
+    )
+    try assert(
+        messageBoxHelp.stdout.contains("importMessage and insertMessage"),
+        "message-box help should document its mutations"
+    )
+
+    let owned = runCli([
+        "graphql",
+        "--config", fixture.configPath,
+        "--query", importMessageMutation()
+    ], mode: .messageBox)
+    try assert(
+        !owned.stdout.contains("MAIL_INGEST_NOT_SUPPORTED"),
+        "message-box binary must not reject its own mutations"
+    )
+
+    for mode in [GmailGatewayCLIMode.reader, .draftGateway, .directSender, .mailboxThreads] {
+        let result = runCli([
+            "graphql",
+            "--config", fixture.configPath,
+            "--query", importMessageMutation()
+        ], mode: mode)
+        try assert(
+            result.stdout.contains("MAIL_INGEST_NOT_SUPPORTED"),
+            "mail ingestion should be rejected outside gmail-gateway-message-box"
+        )
+        try assert(
+            result.stdout.contains("gmail-gateway-message-box"),
+            "the rejection should name the binary that owns mail ingestion"
+        )
+    }
+}
+
+func trashMessageMutation() -> String {
+    """
+    mutation {
+      trashMessage(input: {
+        accountId: "personal",
+        messageId: "message-1"
+      }) {
+        status
+        operation
+        messageId
+      }
+    }
+    """
+}
+
+func importMessageMutation() -> String {
+    """
+    mutation {
+      importMessage(input: {
+        accountId: "personal",
+        rfc822Path: "/tmp/smoke.eml"
+      }) {
+        status
+        operation
+        messageId
+      }
+    }
+    """
 }
 
 func testSenderRoutesSendMessageToDirectSend(cleanup: inout [String]) throws {

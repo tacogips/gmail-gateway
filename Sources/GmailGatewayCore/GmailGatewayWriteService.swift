@@ -7,13 +7,44 @@ public enum GmailGatewayWriteOperation: String, Sendable {
     case readDraft = "READ_DRAFT"
     case sendDraft = "SEND_DRAFT"
     case send = "SEND"
+    case modifyThreadLabels = "MODIFY_THREAD_LABELS"
+    case modifyMessageLabels = "MODIFY_MESSAGE_LABELS"
+    case batchModifyMessageLabels = "BATCH_MODIFY_MESSAGE_LABELS"
+    case trashThread = "TRASH_THREAD"
+    case untrashThread = "UNTRASH_THREAD"
+    case trashMessage = "TRASH_MESSAGE"
+    case untrashMessage = "UNTRASH_MESSAGE"
+    case deleteThread = "DELETE_THREAD"
+    case deleteMessage = "DELETE_MESSAGE"
+    case batchDeleteMessages = "BATCH_DELETE_MESSAGES"
+    case createLabel = "CREATE_LABEL"
+    case updateLabel = "UPDATE_LABEL"
+    case deleteLabel = "DELETE_LABEL"
+    case importMessage = "IMPORT_MESSAGE"
+    case insertMessage = "INSERT_MESSAGE"
+
+    /// The mailbox capability a credential must hold for this operation.
+    var requiredCapability: MailboxCapability {
+        switch self {
+        case .createDraft, .updateDraft, .deleteDraft, .readDraft, .sendDraft, .send:
+            return .send
+        case .modifyThreadLabels, .modifyMessageLabels, .batchModifyMessageLabels,
+             .trashThread, .untrashThread, .trashMessage, .untrashMessage,
+             .createLabel, .updateLabel, .deleteLabel:
+            return .modify
+        case .deleteThread, .deleteMessage, .batchDeleteMessages:
+            return .permanentDelete
+        case .importMessage, .insertMessage:
+            return .insert
+        }
+    }
 
     /// Whether the payload for this operation names the draft it acted on.
     var reportsDraftId: Bool {
         switch self {
         case .createDraft, .updateDraft, .deleteDraft, .readDraft, .sendDraft:
             return true
-        case .send:
+        default:
             return false
         }
     }
@@ -32,6 +63,36 @@ public enum GmailGatewayWriteOperation: String, Sendable {
             return "sendDraft"
         case .send:
             return "sendMessage"
+        case .modifyThreadLabels:
+            return "modifyThreadLabels"
+        case .modifyMessageLabels:
+            return "modifyMessageLabels"
+        case .batchModifyMessageLabels:
+            return "batchModifyMessageLabels"
+        case .trashThread:
+            return "trashThread"
+        case .untrashThread:
+            return "untrashThread"
+        case .trashMessage:
+            return "trashMessage"
+        case .untrashMessage:
+            return "untrashMessage"
+        case .deleteThread:
+            return "deleteThread"
+        case .deleteMessage:
+            return "deleteMessage"
+        case .batchDeleteMessages:
+            return "batchDeleteMessages"
+        case .createLabel:
+            return "createLabel"
+        case .updateLabel:
+            return "updateLabel"
+        case .deleteLabel:
+            return "deleteLabel"
+        case .importMessage:
+            return "importMessage"
+        case .insertMessage:
+            return "insertMessage"
         }
     }
 
@@ -49,6 +110,20 @@ public enum GmailGatewayWriteOperation: String, Sendable {
             return "sending Gmail drafts"
         case .send:
             return "sending Gmail messages"
+        case .modifyThreadLabels, .modifyMessageLabels, .batchModifyMessageLabels:
+            return "modifying Gmail labels on stored mail"
+        case .trashThread, .trashMessage:
+            return "trashing Gmail mail"
+        case .untrashThread, .untrashMessage:
+            return "restoring Gmail mail from trash"
+        case .deleteThread, .deleteMessage, .batchDeleteMessages:
+            return "permanently deleting Gmail mail"
+        case .createLabel, .updateLabel, .deleteLabel:
+            return "managing Gmail labels"
+        case .importMessage:
+            return "importing Gmail messages"
+        case .insertMessage:
+            return "inserting Gmail messages"
         }
     }
 }
@@ -168,16 +243,23 @@ public struct GmailGatewayWriteService {
         let credential = try readerService.requireCredential(account.credentialId)
         guard !account.isFallback else {
             throw GmailGatewayError(
-                "Fallback account cannot send mail; create a config file with an explicit email_address",
+                "Fallback account cannot mutate mail; create a config file with an explicit email_address",
                 code: .configInvalid,
                 exitCode: .graphqlExecutionError
             )
         }
-        guard credential.accessMode == .readSend else {
+        let capability = operation.requiredCapability
+        guard credential.accessMode.grants(capability) else {
+            let accepted = AccessMode.modesGranting(capability).map(\.rawValue).joined(separator: " or ")
             throw GmailGatewayError(
-                "Credential \(credential.id) must use read_send access mode before \(operation.authContext)",
-                code: .sendNotSupported,
-                exitCode: .graphqlExecutionError
+                "Credential \(credential.id) must use \(accepted) access mode before \(operation.authContext)",
+                code: capability == .send ? .sendNotSupported : .accessModeInsufficient,
+                exitCode: .graphqlExecutionError,
+                details: [
+                    "credentialId": credential.id,
+                    "configuredAccessMode": credential.accessMode.rawValue,
+                    "requiredCapability": capability.rawValue
+                ]
             )
         }
         try validateAuthenticatedSenderIdentity(account: account, credential: credential)

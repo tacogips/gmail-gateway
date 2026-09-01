@@ -54,6 +54,14 @@ run = 'swift run gmail-gateway-draft "$@"'
 description = "Run the send-capable gmail gateway"
 run = 'swift run gmail-gateway-sender "$@"'
 
+[tasks."run:threads"]
+description = "Run the mailbox-mutating gmail gateway"
+run = 'swift run gmail-gateway-threads "$@"'
+
+[tasks."run:message-box"]
+description = "Run the mail-ingesting gmail gateway"
+run = 'swift run gmail-gateway-message-box "$@"'
+
 [tasks."test"]
 description = "Run Swift tests and smoke tests"
 run = '''

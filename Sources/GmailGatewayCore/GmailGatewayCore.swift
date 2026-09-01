@@ -11,6 +11,7 @@ public enum GmailGatewayExitCode: Int32, Sendable {
 }
 
 public enum GmailGatewayErrorCode: String, Sendable {
+    case accessModeInsufficient = "ACCESS_MODE_INSUFFICIENT"
     case accountNotFound = "ACCOUNT_NOT_FOUND"
     case attachmentNotFound = "ATTACHMENT_NOT_FOUND"
     case authBootstrapNotImplemented = "AUTH_BOOTSTRAP_NOT_IMPLEMENTED"
@@ -24,6 +25,9 @@ public enum GmailGatewayErrorCode: String, Sendable {
     case messageNotFound = "MESSAGE_NOT_FOUND"
     case providerApiError = "PROVIDER_API_ERROR"
     case providerRateLimited = "PROVIDER_RATE_LIMITED"
+    case labelNotFound = "LABEL_NOT_FOUND"
+    case mailIngestNotSupported = "MAIL_INGEST_NOT_SUPPORTED"
+    case mailboxMutationNotSupported = "MAILBOX_MUTATION_NOT_SUPPORTED"
     case sendDisabledInDraftGateway = "SEND_DISABLED_IN_DRAFT_GATEWAY"
     case sendDisabledInReader = "SEND_DISABLED_IN_READER"
     case sendNotSupported = "SEND_NOT_SUPPORTED"
@@ -66,9 +70,21 @@ public enum MailProvider: String, Codable, Equatable, Sendable {
     }
 }
 
+/// What a credential is allowed to do with a mailbox, independent of which binary is asking.
+/// Binaries gate which capabilities they expose; the access mode gates which the credential holds.
+public enum MailboxCapability: String, Sendable {
+    case read
+    case send
+    case modify
+    case insert
+    case permanentDelete
+}
+
 public enum AccessMode: String, Codable, Equatable, Sendable {
     case read
     case readSend = "read_send"
+    case readModify = "read_modify"
+    case full
 
     var graphQLValue: String {
         switch self {
@@ -76,7 +92,37 @@ public enum AccessMode: String, Codable, Equatable, Sendable {
             return "READ"
         case .readSend:
             return "READ_SEND"
+        case .readModify:
+            return "READ_MODIFY"
+        case .full:
+            return "FULL"
         }
+    }
+
+    var capabilities: Set<MailboxCapability> {
+        switch self {
+        case .read:
+            return [.read]
+        case .readSend:
+            return [.read, .send]
+        case .readModify:
+            return [.read, .modify, .insert]
+        case .full:
+            return [.read, .send, .modify, .insert, .permanentDelete]
+        }
+    }
+
+    func grants(_ capability: MailboxCapability) -> Bool {
+        capabilities.contains(capability)
+    }
+
+    static var allRawValues: [String] {
+        [AccessMode.read, .readSend, .readModify, .full].map(\.rawValue)
+    }
+
+    /// Access modes that grant `capability`, in increasing order of privilege, for error messages.
+    static func modesGranting(_ capability: MailboxCapability) -> [AccessMode] {
+        [.read, .readSend, .readModify, .full].filter { $0.grants(capability) }
     }
 }
 

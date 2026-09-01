@@ -12,6 +12,8 @@ let package = Package(
     .executable(name: "gmail-gateway-reader", targets: ["GmailGatewayReader"]),
     .executable(name: "gmail-gateway-draft", targets: ["GmailGatewayDraft"]),
     .executable(name: "gmail-gateway-sender", targets: ["GmailGatewaySender"]),
+    .executable(name: "gmail-gateway-threads", targets: ["GmailGatewayThreads"]),
+    .executable(name: "gmail-gateway-message-box", targets: ["GmailGatewayMessageBox"]),
     .executable(name: "gmail-gateway-swift-smoke-tests", targets: ["GmailGatewaySwiftSmokeTests"])
   ],
   targets: [
@@ -26,6 +28,14 @@ let package = Package(
     ),
     .executableTarget(
       name: "GmailGatewaySender",
+      dependencies: ["GmailGatewayCore"]
+    ),
+    .executableTarget(
+      name: "GmailGatewayThreads",
+      dependencies: ["GmailGatewayCore"]
+    ),
+    .executableTarget(
+      name: "GmailGatewayMessageBox",
       dependencies: ["GmailGatewayCore"]
     ),
     .executableTarget(
