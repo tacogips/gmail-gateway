@@ -1,85 +1,78 @@
-# Brief: declared schema, GraphQL variables, and `GmailGatewaySDK` (2026-09-04)
+# Brief: replace the GraphQL scanner with the kit runtime, declared schema, variables, `GmailGatewaySDK` (2026-09-04)
 
 Master design: `/Users/taco/gits/tacogips/riela/docs/briefs/gateway-sdk-2026-09-04.md`
-(sections 2 and 3.4 are normative). The shared kit is implemented at
-`/Users/taco/gits/tacogips/gateway-sdk-kit` (read its `README.md` and
-`design-docs/briefs/gateway-sdk-kit-2026-09-04.md` for the exact API, especially
-`GraphQLVariableInliner`). Treat this whole brief as exactly ONE feature.
+(sections 2, 2.6 and 3.4 are normative). The shared kit is implemented at
+`/Users/taco/gits/tacogips/gateway-sdk-kit` (read its `README.md`; the pieces this brief
+uses are `GatewaySchemaCatalog`, `GatewayGraphQLRuntime`, `GatewayResolverContext`,
+`GatewayResolverError`, `GatewayEnvelope`, `GatewaySDK`, `GatewaySchemaSearch`,
+`GatewayJSONValue`). Treat this whole brief as exactly ONE feature.
 
 IMPORTANT: this worktree (`/Users/taco/gits/tacogips/gmail-gateway-worktrees/gateway-sdk`,
 branch `feat/gateway-sdk`) was created from the committed HEAD `2761f3b`. The main checkout
 at `/Users/taco/gits/tacogips/gmail-gateway` holds a large uncommitted persistent-OAuth
-work in progress (`runPersistent`, `auth setup`, Keychain vault, google-service-gateway
-dependency). Do not read from, write to, or build in the main checkout, and do not try to
-reproduce that WIP here. Everything in this brief is against the sync
-`GmailGatewayCLI.run(arguments:environment:)` path that exists at HEAD.
+work in progress. Do not read from, write to, or build in the main checkout, and do not
+try to reproduce that WIP here.
 
-## Goal
+## Operator decisions
 
-1. gmail-gateway gains a declared GraphQL schema (today there is none: execution is
-   substring scanning and the only SDL is prose in `design-docs/specs/design-gmail-gateway.md`).
-2. `graphql --query ... --variables <json> | --variables-file <path>` works in every mode.
-3. A `GmailGatewaySDK` facade exposes operation-by-name invocation, raw passthrough,
-   SDL, and regex search.
+- **No backward compatibility.** The substring-scanning GraphQL implementation is
+  deleted, not wrapped. Query shapes the scanner tolerated but the spec never declared
+  (flat `threads(accountId: ...)` arguments, loosely-honoured input types) disappear.
+- The GraphQL runtime is the kit's `GatewayGraphQLRuntime`; gmail-gateway contributes the
+  schema declaration and one resolver per root field. gmail-gateway must not grow its own
+  parser.
+- GraphQL variables are first-class.
 
 ## Verified seams (2026-09-04, HEAD 2761f3b)
 
 - `Sources/GmailGatewayCore/GmailGatewayCLI.swift:41 public struct GmailGatewayCLI`,
   init `:46 (mode:)`, `:143 run(arguments:environment:) -> GmailGatewayCommandResult`
-  (sync, non-throwing; `GmailGatewayCore.swift:37`: `exitCode, stdout, stderr`).
-  Subcommand dispatch `:222-274` (`doctor`, `graphql`, `config validate`, `auth ...`,
-  `cache prune`, `file download`); no `schema` subcommand. Help text `rootHelpText(mode:)`
-  `:564-640`.
+  (sync, non-throwing; `GmailGatewayCore.swift:37`: `exitCode, stdout, stderr`);
+  subcommand dispatch `:222-274`; help text `rootHelpText(mode:)` `:564-640`.
 - `GmailGatewayCLIMode` (`GmailGatewayCLI.swift:4`): `.reader`, `.draftGateway`,
   `.directSender`, `.mailboxThreads`, `.messageBox`; `requiredCapability` `:27`.
-- `GmailGatewayCLIParsing.swift:141-165` `graphql` flags (`--query` xor `--query-file`,
-  `--config`, `--pretty`); `:167 loadVariables(flags:)` (dead code, returns
-  `[String: Any]`); `:190-198 rejectUnsupportedVariables` (called from
-  `GmailGatewayCLI.swift:284`); `:200 loadVariablesFile`.
-- Scanner: `GmailGatewayGraphQLScanning.swift:1 prepareGraphQLQuery` (strips comments,
-  rejects fragments :51 and multiple root fields :62); dispatch chains
-  `GmailGatewayGraphQL.swift` (reader :18-92, write :100-174, `executeReaderGraphQL` :3
-  internal, `executeWriteGraphQL` :100 public, `executeMailboxGraphQL` :177,
-  `executeMessageBoxGraphQL` :195), `GmailGatewayGraphQLDrafts.swift:27`,
-  `GmailGatewayGraphQLMailbox.swift:30`; argument scanning
-  `GmailGatewayGraphQLArguments.swift` (`extractStringArgument`, `extractOptionalIntArgument`,
-  `threads` field set :195); selection projection `GmailGatewayGraphQLSelection.swift`.
-- Root-field lists: `GmailGatewayGraphQLDrafts.swift:3 draftMutationRootFields`
-  (createDraft, createReplyDraft, createForwardDraft, updateDraft, deleteDraft), `:10
-  sendMutationRootFields` (sendMessage, replyMessage, forwardMessage, sendDraft), `:11
-  draftQueryRootFields` (drafts, draft); `GmailGatewayGraphQLMailbox.swift:3
-  mailboxMutationRootFields` (13), `:19 ingestMutationRootFields` (importMessage,
-  insertMessage); `GmailGatewayGraphQL.swift:16 writeMutationRootFields`. Reader queries
-  (every mode): `accounts`, `account(id)`, `threads(accountId, query, starred, direction,
-  labelIds, receivedAfter, receivedBefore, first, after; also nested under input:)`,
-  `thread(accountId, threadId)`, `message(accountId, messageId)`,
-  `messageFileSet(accountId, messageId)`, `attachment(accountId, messageId, attachmentId)`,
-  `labels(accountId)`, `profile(accountId)`.
-- Per-mode rejection table (must be reproduced by the catalog): reader = queries only
-  (`GmailGatewayGraphQL.swift:21,:28`); draft = + drafts/draft + draft mutations, no send
-  (`GmailGatewayGraphQLDrafts.swift:96`); sender = + send mutations; threads = queries +
-  mailbox mutations only (`GmailGatewayGraphQL.swift:232`, `GmailGatewayGraphQLMailbox.swift:85`);
-  message-box = queries + ingest only (`GmailGatewayGraphQLMailbox.swift:97`). Explicit
-  allowlists for `updateDraft` (`GmailGatewayGraphQLDrafts.swift:13`) and ingest
-  (`GmailGatewayGraphQLMailbox.swift:21`).
+- `GmailGatewayCLIParsing.swift:141-165` `graphql` flags; `:167 loadVariables(flags:)`
+  (currently dead), `:190-198 rejectUnsupportedVariables` (called from
+  `GmailGatewayCLI.swift:284`), `:200 loadVariablesFile`.
+- **To delete**: `GmailGatewayGraphQLScanning.swift` (`prepareGraphQLQuery`),
+  `GmailGatewayGraphQLArguments.swift` (`extractStringArgument`, ..., `threads` field set
+  :195), `GmailGatewayGraphQLSelection.swift` (`directFieldExists`, `selectionBody`), and
+  the `rootFieldSource` dispatch chains in `GmailGatewayGraphQL.swift` (reader :18-92,
+  write :100-174), `GmailGatewayGraphQLDrafts.swift:27`, `GmailGatewayGraphQLMailbox.swift:30`,
+  together with the per-mode rejection helpers (`GmailGatewayGraphQL.swift:21,:28,:232`,
+  `GmailGatewayGraphQLDrafts.swift:96`, `GmailGatewayGraphQLMailbox.swift:85,:97`) and the
+  `*RootFields` arrays — their knowledge moves into the declared schema.
+- **To keep** (the provider layer): `GmailGatewayService` (`GmailGatewayCore.swift:229`:
+  `listAccounts`, `graphQLAccounts`, `graphQLAccount(id:)`, `searchThreads(...)` :275,
+  `getThread` :310, `getMessage` :320, `getAttachment` :330, `listLabels` :377,
+  `getProfile` :383), `GmailGatewayWriteService` (`GmailGatewayWriteService.swift:225`,
+  `sendMessage(input:mode:)` :269), `GmailGatewayDraftService.swift` (`listDrafts` :61,
+  `getDraft` :79, `updateDraft` :88, `sendDraft` :130, `deleteDraft` :139),
+  `GmailGatewayMailboxService.swift` (`modifyThreadLabels` :107 … `insertMessage` :274),
+  the `MailboxCapability` / `AccessMode` gate (`GmailGatewayCore.swift:75-117`), config
+  loading, OAuth, MIME, file materialisation. These return `[String: Any]` / `Any`;
+  convert with `GatewayJSONValue(any:)`.
 - Type shapes: `design-docs/specs/design-gmail-gateway.md:176-240` (`Query`, `Mutation`,
   `ThreadSearchInput`, `SendMessageInput`, `ReplyMessageInput`, `ForwardMessageInput`,
   `UpdateDraftInput`, `DeleteDraftInput`, `SendDraftInput`, `SendMessagePayload`,
   `MailAccount`, `ThreadConnection`, `MailThread`, `MailMessage`, `MailMessageFileSet`,
-  `MailAttachment`, `MailLabel`, `MailProfile`); the fields the projection layer actually
-  returns (`GmailGatewayGraphQLSelection.swift`, the `*Service` JSON builders) are the
-  ground truth where the prose drifts.
-- Services (public, untyped `[String: Any]`, no tier enforcement): `GmailGatewayService`
-  (`GmailGatewayCore.swift:229`), `GmailGatewayWriteService` (`GmailGatewayWriteService.swift:225`),
-  drafts (`GmailGatewayDraftService.swift`), mailbox (`GmailGatewayMailboxService.swift`).
+  `MailAttachment`, `MailLabel`, `MailProfile`) plus the mailbox (13) and ingest (2)
+  mutations; the JSON the services actually build is the ground truth for object fields
+  where the prose drifts.
+- Mode table to reproduce as authorization: reader = queries only; draft = + `drafts`,
+  `draft` + createDraft/createReplyDraft/createForwardDraft/updateDraft/deleteDraft;
+  sender = draft + sendMessage/replyMessage/forwardMessage/sendDraft; threads = queries +
+  modifyThreadLabels/modifyMessageLabels/batchModifyMessageLabels/trashThread/untrashThread/
+  trashMessage/untrashMessage/deleteThread/deleteMessage/batchDeleteMessages/createLabel/
+  updateLabel/deleteLabel; message-box = queries + importMessage/insertMessage.
 - Tests: swift-testing, `Tests/GmailGatewayCoreTests/` (~183 cases; `CommandTests.swift`,
-  `DraftGatewayTests.swift`, `MailboxGatewayTests.swift`, `TestGmailRequestCaptureProtocol.swift`
-  URLProtocol capture), plus `Sources/GmailGatewaySwiftSmokeTests` executable;
-  `mise run test` = `swift test` + `swift run gmail-gateway-swift-smoke-tests`.
+  `DraftGatewayTests.swift`, `MailboxGatewayTests.swift`, `ReplyForwardTests.swift`,
+  `TestGmailRequestCaptureProtocol.swift` URLProtocol capture), plus
+  `Sources/GmailGatewaySwiftSmokeTests` executable; `mise run test` = `swift test` +
+  `swift run gmail-gateway-swift-smoke-tests`.
 - riela calls `GmailGatewayCLI(mode:).run(arguments: ["graphql","--query",doc], environment:)`
-  from `/Users/taco/gits/tacogips/riela/Sources/RielaCLI/ProductionNodeAdapter+GmailGatewayCLIAddons.swift:86-103`
-  with `acceptsVariables: false`; it will switch to the facade and start passing
-  variables. Keep `run(arguments:environment:)` working.
+  from `/Users/taco/gits/tacogips/riela/Sources/RielaCLI/ProductionNodeAdapter+GmailGatewayCLIAddons.swift:86-103`;
+  it will switch to the facade. Keep `run(arguments:environment:)` as the CLI entry.
 
 ## Deliverables
 
@@ -87,60 +80,56 @@ reproduce that WIP here. Everything in this brief is against the sync
    worktree is `/Users/taco/gits/tacogips/gmail-gateway-worktrees/gateway-sdk`) and
    product `GatewaySDKKit` on `GmailGatewayCore`. One-line comment that the operator
    switches it to a URL pin later.
-2. **Declared schema** (`Sources/GmailGatewayCore/Schema/GmailGatewaySchema.swift`, split
-   across files if over 1000 lines): one full declaration of every root field, argument,
-   input type, payload and object type as `GatewaySchemaCatalog` building blocks, and
-   `GatewaySchemaCatalog.gmail(mode: GmailGatewayCLIMode) -> GatewaySchemaCatalog`
-   filtering by mode exactly per the rejection table (tier strings: `reader`, `draft`,
-   `sender`, `threads`, `message-box`). `threads` is declared with flat arguments
-   (accountId, query, starred, direction, labelIds, receivedAfter, receivedBefore, first,
-   after) matching what the scanner reads; document in the summary that the nested
-   `input:` form is also accepted by the scanner. Parity tests: for each mode, catalog
-   query names == the reader list (+ drafts where applicable) and catalog mutation names
-   == the union of the applicable `*RootFields` arrays; `catalog.validate()` empty for
-   every mode; every argument name declared for a root field is one the scanner extracts
-   (drive `prepareGraphQLQuery` + the dispatch with a fake service and assert no
-   "unknown argument"/ignored-argument path; where the scanner silently ignores unknown
-   arguments, add a test that it reads each declared argument).
-3. **Variables.** Delete `rejectUnsupportedVariables` and its call sites; wire
-   `loadVariables` / `loadVariablesFile` into the `graphql` path; convert to
-   `[String: GatewayJSONValue]`; run `GraphQLVariableInliner(catalog: .gmail(mode:))
-   .inline(document:variables:)` BEFORE `prepareGraphQLQuery`; map inliner errors to
-   `GmailGatewayError(code: .invalidArgument, exitCode: .invalidCliUsage)` with the
-   inliner's message. The rewritten document (no variable definitions, literals inlined)
-   flows into the unchanged scanner. Documents without variable definitions behave exactly
-   as before (byte-identical path).
-4. **Facade** (`Sources/GmailGatewayCore/SDK/GmailGatewaySDK.swift`):
+2. **Declared schema** (`Sources/GmailGatewayCore/Schema/GmailGatewaySchema*.swift`):
+   `GatewaySchemaCatalog.gmailFull` (every query, mutation, input, payload, object and
+   enum type; `Direction` and any other enumerations the services accept) and
+   `GatewaySchemaCatalog.gmail(mode: GmailGatewayCLIMode)` (the authorized subset; tier
+   strings `reader`, `draft`, `sender`, `threads`, `message-box`). `threads` takes
+   `input: ThreadSearchInput!` only. Mutations take `input:` objects only. `summary` on
+   every operation; `isDestructive` on delete/trash/batchDelete. `validate()` empty for
+   the full catalog and every mode; a test asserts the mode subsets match the table
+   above both directions.
+3. **Resolvers** (`Sources/GmailGatewayCore/GraphQL/GmailGatewayResolvers*.swift`): one
+   `GatewayGraphQLRuntime.Resolver` per root field, taking coerced arguments, loading
+   config from the `GatewayResolverContext.environment` (`GMAIL_GATEWAY_CONFIG`, credential
+   variables) exactly as the CLI does today, calling the kept services, and returning
+   `GatewayJSONValue`. Service errors become `GatewayResolverError`s carrying the existing
+   `GmailGatewayError` codes so the envelope keeps today's error codes. The access-mode
+   gate stays in the services.
+4. **Executor** (`Sources/GmailGatewayCore/GraphQL/GmailGatewayGraphQLExecutor.swift`):
+   `run(query:variables:mode:environment:) async -> GatewayEnvelope` building
+   `GatewayGraphQLRuntime(catalog: .gmailFull, authorized: .gmail(mode:), resolvers:)`;
+   used by the `graphql` CLI subcommand and by the facade. The CLI keeps its sync
+   `run(arguments:environment:)` signature by bridging the async executor (a semaphore or
+   `Task` + wait, matching how the codebase already does sync-over-async if it does;
+   otherwise add a small helper). Delete `rejectUnsupportedVariables`; wire
+   `--variables` / `--variables-file`. Delete the scanner files listed above and every
+   helper that only they used.
+5. **Facade** (`Sources/GmailGatewayCore/SDK/GmailGatewaySDK.swift`):
    ```swift
    public struct GmailGatewaySDK: GatewaySDK {
      public let provider = "gmail-gateway"
-     public let tier: String                   // "reader" | "draft" | "sender" | "threads" | "message-box"
-     public let catalog: GatewaySchemaCatalog
+     public let tier: String
+     public let catalog: GatewaySchemaCatalog       // .gmail(mode:)
      public init(mode: GmailGatewayCLIMode)
      public func execute(document:variables:environment:) async -> GatewayEnvelope
    }
    ```
-   `execute` goes through a new internal `GmailGatewayGraphQLExecutor.run(query:variables:
-   mode:environment:) -> GmailGatewayCommandResult` that the `graphql` subcommand also
-   uses (config loading from `GMAIL_GATEWAY_CONFIG` in `environment`, inliner, scanner,
-   dispatch, envelope rendering), so CLI and SDK cannot drift; the result maps to
-   `GatewayEnvelope` via `init(parsingCLIOutput:exitCode:)`.
-5. **CLI.** `graphql schema` (prints `catalog.sdl()` for the binary's mode),
-   `graphql search <regex> [--kinds ...] [--include-referenced-types] [--limit N]` (JSON
-   matches), `graphql operation <name> [--variables|--variables-file] [--select a.b,c]`
-   (facade invoke); `--variables` / `--variables-file` documented for `graphql`; help text
-   per mode updated; `README.md` gains "GraphQL variables" and "Client SDK" sections;
-   `design-docs/specs/design-gmail-gateway.md` gets a short note that the declared schema
-   in `GmailGatewaySchema.swift` is now the source of truth.
-6. **Tests**: parity and validate() per mode (item 2); variables end to end through
-   `GmailGatewayCLI.run` with the URLProtocol capture for `threads` (string, int, list
-   variables), `sendMessage` (input object variable) in sender mode, and a `$var` inside a
-   string literal left untouched; each inliner validation error surfaces as
-   `invalidArgument` with a non-zero exit; a document without variables produces the same
-   request as before (regression); facade `invoke` with `.default` selection for `threads`
-   and `labels` (reader) and `createDraft` (draft mode) producing accepted documents;
-   reader-mode SDK invoking `sendMessage` yields the existing mode-rejection error in the
-   envelope; `graphql schema` / `graphql search` CLI; smoke tests updated for the new help.
+6. **CLI.** `graphql --query|--query-file [--variables|--variables-file] [--pretty]`,
+   `graphql schema` (authorized SDL), `graphql search <regex> [--kinds ...]
+   [--include-referenced-types] [--limit N]`, `graphql operation <name>
+   [--variables|--variables-file] [--select a.b,c]`; help text per mode; `README.md`
+   rewritten for the declared schema, variables, and the SDK; `design-docs/specs/design-gmail-gateway.md`
+   gets a note that `GmailGatewaySchema*.swift` is now normative and that the flat
+   `threads` form was removed.
+7. **Tests.** Rewrite the scanner-era tests against the runtime: every root field in
+   every mode through `GmailGatewayCLI.run` with the URLProtocol capture (literal
+   arguments and `$variables`, string/int/list/input-object variables); each validator
+   error code surfaces as a non-zero exit with a JSON error; mode denial yields
+   `CAPABILITY_DENIED` naming the mode and never hits the network; selection projection
+   (aliases, nested `messages { from { address } }`, missing keys → null); facade `invoke`
+   with `.default` selection for `threads`, `labels`, `createDraft`; `graphql schema` /
+   `search` / `operation` CLI; smoke tests updated.
 
 ## Verification
 
@@ -149,6 +138,6 @@ green. Commit on `feat/gateway-sdk` in this worktree as work lands; do not push.
 
 ## Non-goals
 
-No parser rewrite (the scanner stays), no changes to OAuth / config loading / services /
-MIME handling, no persistent-auth work, no packaging changes. Do not touch
-`/Users/taco/gits/tacogips/gmail-gateway` (the main checkout).
+No changes to OAuth, config loading, services, MIME handling, persistent auth, or
+packaging. No private parser. Do not touch `/Users/taco/gits/tacogips/gmail-gateway`
+(the main checkout).
