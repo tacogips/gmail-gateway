@@ -248,34 +248,33 @@ private func testOriginalMessage(
     #expect(normalizedAddressSpec(" plain@example.com ") == "plain@example.com")
 }
 
-@Test func readerRejectsReplyAndForwardMutations() throws {
-    let replyResult = try executeReaderGraphQL(
-        config: testConfig(paths: temporaryConfigPaths()),
-        query: #"{ replyMessage(input: { accountId: "personal", messageId: "m1", textBody: "Body" }) { messageId } }"#
+@Test func readerRejectsReplyAndForwardMutations() async {
+    let replyResult = await GmailGatewayGraphQLExecutor().run(
+        query: #"mutation { replyMessage(input: { accountId: "personal", messageId: "m1", textBody: "Body" }) { messageId } }"#,
+        mode: .reader,
+        environment: [:]
     )
-    let forwardResult = try executeReaderGraphQL(
-        config: testConfig(paths: temporaryConfigPaths()),
-        query: #"{ forwardMessage(input: { accountId: "personal", messageId: "m1", to: ["a@example.com"] }) { messageId } }"#
+    let forwardResult = await GmailGatewayGraphQLExecutor().run(
+        query: #"mutation { forwardMessage(input: { accountId: "personal", messageId: "m1", to: ["a@example.com"] }) { messageId } }"#,
+        mode: .reader,
+        environment: [:]
     )
 
-    #expect(replyResult.exitCode == .graphqlExecutionError)
-    #expect("\(replyResult.body)".contains("SEND_DISABLED_IN_READER"))
-    #expect(forwardResult.exitCode == .graphqlExecutionError)
-    #expect("\(forwardResult.body)".contains("SEND_DISABLED_IN_READER"))
+    #expect(replyResult.exitCode == 1)
+    #expect(replyResult.errors.first?.code == "CAPABILITY_DENIED")
+    #expect(forwardResult.exitCode == 1)
+    #expect(forwardResult.errors.first?.code == "CAPABILITY_DENIED")
 }
 
-@Test func replyMutationRequiresReadSendAccessMode() throws {
-    let paths = temporaryConfigPaths()
-    defer {
-        try? FileManager.default.removeItem(atPath: paths.root)
-    }
-    let config = testConfig(paths: paths, accessMode: .read)
-    let result = try executeWriteGraphQL(
-        config: config,
-        query: #"{ replyMessage(input: { accountId: "personal", messageId: "m1", textBody: "Body" }) { messageId } }"#,
-        mode: .directSend
+@Test func replyMutationRequiresReadSendAccessMode() async throws {
+    let fixture = try GatewayRuntimeFixture(accessMode: .read)
+    defer { fixture.remove() }
+    let result = await GmailGatewayGraphQLExecutor().run(
+        query: #"mutation { replyMessage(input: { accountId: "personal", messageId: "m1", textBody: "Body" }) { messageId } }"#,
+        mode: .directSender,
+        environment: fixture.environment
     )
 
-    #expect(result.exitCode == .graphqlExecutionError)
-    #expect("\(result.body)".contains("read_send"))
+    #expect(result.exitCode == 1)
+    #expect(result.errors.first?.message.contains("read_send") == true)
 }

@@ -87,10 +87,9 @@ struct GmailLiveMailbox {
         threadId: String,
         trashed: Bool
     ) throws -> MailboxMutationResult {
-        let object = try postGmailJSONObject(
+        let object = try postGmailBodylessJSONObject(
             path: "\(gmailThreadsPath)/\(urlPathEncode(threadId))/\(trashed ? "trash" : "untrash")",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
-            body: [:],
             context: trashed ? "Gmail thread trash failed" : "Gmail thread untrash failed"
         )
         return MailboxMutationResult(
@@ -109,10 +108,9 @@ struct GmailLiveMailbox {
         messageId: String,
         trashed: Bool
     ) throws -> MailboxMutationResult {
-        let object = try postGmailJSONObject(
+        let object = try postGmailBodylessJSONObject(
             path: "\(gmailMessagesPath)/\(urlPathEncode(messageId))/\(trashed ? "trash" : "untrash")",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
-            body: [:],
             context: trashed ? "Gmail message trash failed" : "Gmail message untrash failed"
         )
         return messageMutationResult(

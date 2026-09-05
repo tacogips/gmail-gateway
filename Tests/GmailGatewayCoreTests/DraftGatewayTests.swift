@@ -24,76 +24,136 @@ extension GmailRequestProtocolTests {
 
         // MARK: - Binary capability boundaries
 
-        @Test func draftGatewayRejectsSendMutations() throws {
-            let queries = [
-                #"mutation { sendMessage(accountId: "personal", to: ["a@example.com"], textBody: "Body") { status } }"#,
-                #"mutation { replyMessage(accountId: "personal", messageId: "m1", textBody: "Body") { status } }"#,
-                #"mutation { forwardMessage(accountId: "personal", messageId: "m1", to: ["a@example.com"]) { status } }"#
+        @Test func catalogRuntimeEnforcesDraftAndSenderOwnership() async throws {
+            let fixture = try GatewayRuntimeFixture(accessMode: .readSend)
+            defer { fixture.remove() }
+            let cases: [(GmailGatewayCLIMode, String)] = [
+                (.reader, "mutation { createDraft(input: { accountId: \"personal\", to: [\"a@example.test\"], textBody: \"x\" }) { status } }"),
+                (.draftGateway, "mutation { sendMessage(input: { accountId: \"personal\", to: [\"a@example.test\"], textBody: \"x\" }) { status } }"),
+                (.draftGateway, "mutation { sendDraft(input: { accountId: \"personal\", draftId: \"draft-1\" }) { status } }"),
+                (.reader, "query { drafts(accountId: \"personal\") { totalCount } }")
             ]
-            try withDraftConfig { config, _ in
-                for query in queries {
-                    let result = try executeWriteGraphQL(config: config, query: query, mode: .draftDefault)
-
-                    #expect(result.exitCode == .graphqlExecutionError)
-                    #expect(graphQLErrorCode(result.body) == GmailGatewayErrorCode.sendDisabledInDraftGateway.rawValue)
-                }
-            }
-        }
-
-        @Test func draftGatewayRejectsAliasedSendMutation() throws {
-            try withDraftConfig { config, _ in
-                let result = try executeWriteGraphQL(
-                    config: config,
-                    query: #"mutation { out: sendMessage(accountId: "personal", to: ["a@example.com"], textBody: "B") { status } }"#,
-                    mode: .draftDefault
+            for (mode, document) in cases {
+                let envelope = await GmailGatewayGraphQLExecutor().run(
+                    query: document,
+                    mode: mode,
+                    environment: fixture.environment
                 )
-
-                #expect(graphQLErrorCode(result.body) == GmailGatewayErrorCode.sendDisabledInDraftGateway.rawValue)
+                #expect(envelope.exitCode == 1)
+                #expect(envelope.errors.first?.code == "CAPABILITY_DENIED")
             }
         }
 
-        @Test func senderGatewayStillAllowsSendMutations() throws {
-            try withDraftConfig { config, _ in
-                TestGmailRequestCaptureProtocol.reset()
-                TestGmailRequestCaptureProtocol.responseData = Data(#"{"id":"sent-id","threadId":"thread-id"}"#.utf8)
-                URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
-                defer {
-                    URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
-                    TestGmailRequestCaptureProtocol.reset()
-                }
-
-                let result = try executeWriteGraphQL(
-                    config: config,
-                    query: #"mutation { sendMessage(accountId: "personal", to: ["a@example.com"], textBody: "Body") { status } }"#,
-                    mode: .directSend
-                )
-                let data = try #require(result.body["data"] as? [String: Any])
-                let payload = try #require(data["sendMessage"] as? [String: Any])
-
-                #expect(result.exitCode == .success)
-                #expect(payload["status"] as? String == "SENT")
-                #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == ["/gmail/v1/users/me/messages/send"])
+        @Test func draftAndSenderGraphQLDocumentsUseRequiredInputsAndReachTheirProviderBoundary() async throws {
+            let fixture = try GatewayRuntimeFixture(accessMode: .readSend)
+            defer { fixture.remove() }
+            GatewayRuntimeURLProtocol.reset()
+            URLProtocol.registerClass(GatewayRuntimeURLProtocol.self)
+            defer {
+                URLProtocol.unregisterClass(GatewayRuntimeURLProtocol.self)
+                GatewayRuntimeURLProtocol.reset()
             }
-        }
+            let provider = "https://gmail.googleapis.com"
+            let draftListResponse = Data(#"{"drafts":[{"id":"draft-1"}],"resultSizeEstimate":1}"#.utf8)
+            let draftDetailResponse = Data(#"{"id":"draft-1","message":{"id":"message-id","threadId":"thread-id","payload":{"headers":[]}}}"#.utf8)
+            func configureDraftResponses() {
+                GatewayRuntimeURLProtocol.draftListResponseData = draftListResponse
+                GatewayRuntimeURLProtocol.draftDetailResponseData = draftDetailResponse
+            }
 
-        @Test func readerRejectsDraftMutationsAndDraftQueries() throws {
-            let queries = [
-                #"mutation { updateDraft(accountId: "personal", draftId: "d1", subject: "New") { status } }"#,
-                #"mutation { deleteDraft(accountId: "personal", draftId: "d1") { status } }"#,
-                #"query { drafts(accountId: "personal") { totalCount } }"#,
-                #"query { draft(accountId: "personal", draftId: "d1") { id } }"#
+            configureDraftResponses()
+            let summary = await GmailGatewayGraphQLExecutor().run(
+                query: "{ drafts(accountId: \"personal\", first: 1) { totalCount } }",
+                mode: .draftGateway,
+                environment: fixture.environment
+            )
+            #expect(summary.exitCode == 0)
+            let summaryData = try #require(summary.data?.anyValue as? [String: Any])
+            let summaryDrafts = try #require(summaryData["drafts"] as? [String: Any])
+            #expect(summaryDrafts["totalCount"] as? Int == 1)
+            #expect(
+                GatewayRuntimeURLProtocol.requests.map { "\($0.method) \($0.url)" }
+                    == ["GET \(provider)/gmail/v1/users/me/drafts?maxResults=1"]
+            )
+
+            GatewayRuntimeURLProtocol.reset()
+            configureDraftResponses()
+            let nodes = await GmailGatewayGraphQLExecutor().run(
+                query: "{ drafts(accountId: \"personal\", first: 1) { edges { node { id } } } }",
+                mode: .draftGateway,
+                environment: fixture.environment
+            )
+            #expect(nodes.exitCode == 0)
+            #expect(
+                GatewayRuntimeURLProtocol.requests.map { "\($0.method) \($0.url)" }
+                    == [
+                        "GET \(provider)/gmail/v1/users/me/drafts?maxResults=1",
+                        "GET \(provider)/gmail/v1/users/me/drafts/draft-1?format=full"
+                    ]
+            )
+
+            // Request sequences include all fetch-before-write effects; each final JSON body is
+            // decoded below rather than relying on aggregate path/method containment.
+            // swiftlint:disable large_tuple line_length
+            let cases: [(GmailGatewayCLIMode, String, [(String, String)], String, [String])] = [
+                (.draftGateway, "{ drafts(accountId: \"personal\", first: 1) { totalCount } }", [("GET", "\(provider)/gmail/v1/users/me/drafts?maxResults=1")], "data", []),
+                (.draftGateway, "{ draft(accountId: \"personal\", draftId: \"draft-1\") { id } }", [("GET", "\(provider)/gmail/v1/users/me/drafts/draft-1?format=full")], "data", []),
+                (.draftGateway, "mutation { createDraft(input: { accountId: \"personal\", to: [\"a@example.test\"], textBody: \"x\" }) { status } }", [("POST", "\(provider)/gmail/v1/users/me/drafts")], "DRAFT_CREATED", ["message"]),
+                (.draftGateway, "mutation { createReplyDraft(input: { accountId: \"personal\", messageId: \"message-id\", textBody: \"x\" }) { status } }", [("GET", "\(provider)/gmail/v1/users/me/messages/message-id?format=full"), ("POST", "\(provider)/gmail/v1/users/me/drafts")], "DRAFT_CREATED", ["message"]),
+                (.draftGateway, "mutation { createForwardDraft(input: { accountId: \"personal\", messageId: \"message-id\", to: [\"a@example.test\"] }) { status } }", [("GET", "\(provider)/gmail/v1/users/me/messages/message-id?format=full"), ("GET", "\(provider)/gmail/v1/users/me/messages/message-id?format=full"), ("POST", "\(provider)/gmail/v1/users/me/drafts")], "DRAFT_CREATED", ["message"]),
+                (.draftGateway, "mutation { updateDraft(input: { accountId: \"personal\", draftId: \"draft-1\", to: [\"a@example.test\"], textBody: \"x\" }) { status } }", [("GET", "\(provider)/gmail/v1/users/me/drafts/draft-1?format=full"), ("PUT", "\(provider)/gmail/v1/users/me/drafts/draft-1")], "DRAFT_UPDATED", ["id", "message"]),
+                (.draftGateway, "mutation { deleteDraft(input: { accountId: \"personal\", draftId: \"draft-1\" }) { status } }", [("DELETE", "\(provider)/gmail/v1/users/me/drafts/draft-1")], "DRAFT_DELETED", []),
+                (.directSender, "mutation { sendMessage(input: { accountId: \"personal\", to: [\"a@example.test\"], textBody: \"x\" }) { status } }", [("POST", "\(provider)/gmail/v1/users/me/messages/send")], "SENT", ["raw"]),
+                (.directSender, "mutation { replyMessage(input: { accountId: \"personal\", messageId: \"message-id\", textBody: \"x\" }) { status } }", [("GET", "\(provider)/gmail/v1/users/me/messages/message-id?format=full"), ("POST", "\(provider)/gmail/v1/users/me/messages/send")], "SENT", ["raw"]),
+                (.directSender, "mutation { forwardMessage(input: { accountId: \"personal\", messageId: \"message-id\", to: [\"a@example.test\"] }) { status } }", [("GET", "\(provider)/gmail/v1/users/me/messages/message-id?format=full"), ("GET", "\(provider)/gmail/v1/users/me/messages/message-id?format=full"), ("POST", "\(provider)/gmail/v1/users/me/messages/send")], "SENT", ["raw"]),
+                (.directSender, "mutation { sendDraft(input: { accountId: \"personal\", draftId: \"draft-1\" }) { status } }", [("POST", "\(provider)/gmail/v1/users/me/drafts/send")], "SENT", ["id"])
             ]
-            try withDraftConfig { config, _ in
-                for query in queries {
-                    let result = try executeReaderGraphQL(config: config, query: query)
-
-                    #expect(result.exitCode == .graphqlExecutionError)
-                    #expect(graphQLErrorCode(result.body) == GmailGatewayErrorCode.sendDisabledInReader.rawValue)
-                }
+            // swiftlint:enable large_tuple line_length
+            for (mode, query, effects, status, _) in cases {
+                GatewayRuntimeURLProtocol.reset()
+                let result = GmailGatewayCLI(mode: mode).run(
+                    arguments: ["graphql", "--query", query],
+                    environment: fixture.environment
+                )
+                #expect(result.exitCode == 0, "\(query): \(result.stdout)\(result.stderr)")
+                let root = try #require(draftRoot(in: query))
+                try assertCompleteSuccessEnvelope(result, expectedData: draftEnvelope(root: root, status: status))
+                #expect(
+                    GatewayRuntimeURLProtocol.requests.map { "\($0.method) \($0.url)" }
+                        == effects.map { "\($0.0) \($0.1)" }
+                )
+                let expectedBody = draftProviderBody(for: root)
+                try assertCompleteProviderBodies(GatewayRuntimeURLProtocol.requests, finalBody: expectedBody)
             }
         }
 
-        // MARK: - updateDraft
+        @Test func draftAliasesAndProjectionsRemainRuntimeValidated() throws {
+            let fixture = try GatewayRuntimeFixture(accessMode: .readSend)
+            defer { fixture.remove() }
+            GatewayRuntimeURLProtocol.reset()
+            URLProtocol.registerClass(GatewayRuntimeURLProtocol.self)
+            defer {
+                URLProtocol.unregisterClass(GatewayRuntimeURLProtocol.self)
+                GatewayRuntimeURLProtocol.reset()
+            }
+            let result = GmailGatewayCLI(mode: .draftGateway).run(
+                arguments: [
+                    "graphql", "--query",
+                    "mutation { saved: createDraft(input: { accountId: \"personal\", to: [\"a@example.test\"], textBody: \"x\" }) { state: status } }"
+                ],
+                environment: fixture.environment
+            )
+            #expect(result.exitCode == 0)
+            try assertCompleteSuccessEnvelope(result, expectedData: ["saved": ["state": "DRAFT_CREATED"]])
+            #expect(
+                GatewayRuntimeURLProtocol.requests.map { "\($0.method) \($0.url)" }
+                    == ["POST https://gmail.googleapis.com/gmail/v1/users/me/drafts"]
+            )
+            try assertCompleteProviderBodies(
+                GatewayRuntimeURLProtocol.requests,
+                finalBody: ["message": ["raw": gatewayPlainMIME(to: "a@example.test", subject: nil, body: "x")]]
+            )
+        }
 
         @Test func updateDraftRetainsOmittedHeadersBodyAndAttachments() throws {
             try withDraftConfig { config, _ in
@@ -107,13 +167,17 @@ extension GmailRequestProtocolTests {
                     #expect(result["status"] as? String == "DRAFT_UPDATED")
                     #expect(result["draftId"] as? String == "draft-1")
                     #expect(result["messageId"] as? String == "message-1")
-                    #expect(rawMessage.contains("Subject: Updated subject"))
-                    #expect(rawMessage.contains("To: recipient@example.com"))
-                    #expect(rawMessage.contains("Cc: copied@example.com"))
-                    #expect(rawMessage.contains("In-Reply-To: <origin@mail.example.com>"))
-                    #expect(rawMessage.contains("References: <root@mail.example.com>"))
-                    #expect(rawMessage.contains("Existing draft text"))
-                    #expect(rawMessage.contains("filename=\"keep.txt\""))
+                    #expect(
+                        normalizedDraftMIME(rawMessage) == expectedUpdatedDraftMIME(
+                            subject: "Updated subject",
+                            textBody: "Existing draft text",
+                            htmlBody: "<p>Existing draft html</p>",
+                            attachments: [
+                                ("keep.txt", "YXR0YWNobWVudCBieXRlcw=="),
+                                ("drop.txt", "YXR0YWNobWVudCBieXRlcw==")
+                            ]
+                        )
+                    )
                 }
             }
         }
@@ -129,7 +193,9 @@ extension GmailRequestProtocolTests {
 
                     #expect(TestGmailRequestCaptureProtocol.capturedMethods.last == "PUT")
                     #expect(TestGmailRequestCaptureProtocol.capturedURLs.last?.path == "/gmail/v1/users/me/drafts/draft-1")
+                    #expect(Set(request.keys) == ["id", "message"])
                     #expect(request["id"] as? String == "draft-1")
+                    #expect(Set(message.keys) == ["raw", "threadId"])
                     #expect(message["threadId"] as? String == "thread-1")
                 }
             }
@@ -149,8 +215,14 @@ extension GmailRequestProtocolTests {
                     )
                     let rawMessage = try updatedDraftRawMessage()
 
-                    #expect(rawMessage.contains("filename=\"replacement.txt\""))
-                    #expect(!rawMessage.contains("keep.txt"))
+                    #expect(
+                        normalizedDraftMIME(rawMessage) == expectedUpdatedDraftMIME(
+                            subject: "Existing subject",
+                            textBody: "Existing draft text",
+                            htmlBody: "<p>Existing draft html</p>",
+                            attachments: [("replacement.txt", "cmVwbGFjZW1lbnQgYXR0YWNobWVudA==")]
+                        )
+                    )
                 }
             }
         }
@@ -167,8 +239,45 @@ extension GmailRequestProtocolTests {
                     )
                     let rawMessage = try updatedDraftRawMessage()
 
-                    #expect(rawMessage.contains("filename=\"keep.txt\""))
-                    #expect(!rawMessage.contains("drop.txt"))
+                    #expect(
+                        normalizedDraftMIME(rawMessage) == expectedUpdatedDraftMIME(
+                            subject: "Existing subject",
+                            textBody: "Existing draft text",
+                            htmlBody: "<p>Existing draft html</p>",
+                            attachments: [("keep.txt", "YXR0YWNobWVudCBieXRlcw==")]
+                        )
+                    )
+                }
+            }
+        }
+
+        @Test func providerAttemptBudgetRejectsAttempt1001DuringAttachmentFanoutBeforeDispatch() throws {
+            try withDraftConfig { config, _ in
+                try withDraftProviderResponses {
+                    let budget = GmailGatewayProviderAttemptBudget(maximumRequests: 1_000)
+                    try GmailGatewayProviderAttemptBudgetContext.$current.withValue(budget) {
+                        for _ in 0..<997 {
+                            try budget.consumeAttempt()
+                        }
+                        let error = try requireGmailGatewayError {
+                            _ = try GmailGatewayWriteService(config: config).updateDraft(
+                                input: UpdateDraftInput(
+                                    accountId: "personal",
+                                    draftId: "draft-1",
+                                    subject: "Updated subject"
+                                )
+                            )
+                        }
+
+                        #expect(error.code == .resourceLimit)
+                        #expect(budget.consumedAttemptCount == 1_000)
+                        #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == [
+                            "/gmail/v1/users/me/drafts/draft-1",
+                            "/gmail/v1/users/me/messages/message-1",
+                            "/gmail/v1/users/me/messages/message-1/attachments/attachment-keep"
+                        ])
+                        #expect(!TestGmailRequestCaptureProtocol.capturedMethods.contains("PUT"))
+                    }
                 }
             }
         }
@@ -205,9 +314,17 @@ extension GmailRequestProtocolTests {
                     )
                     let rawMessage = try updatedDraftRawMessage()
 
-                    #expect(rawMessage.contains("Replacement text"))
-                    #expect(!rawMessage.contains("Existing draft text"))
-                    #expect(!rawMessage.contains("<p>Existing draft html</p>"))
+                    #expect(
+                        normalizedDraftMIME(rawMessage) == expectedUpdatedDraftMIME(
+                            subject: "Existing subject",
+                            textBody: "Replacement text",
+                            htmlBody: nil,
+                            attachments: [
+                                ("keep.txt", "YXR0YWNobWVudCBieXRlcw=="),
+                                ("drop.txt", "YXR0YWNobWVudCBieXRlcw==")
+                            ]
+                        )
+                    )
                 }
             }
         }
@@ -243,21 +360,6 @@ extension GmailRequestProtocolTests {
             }
         }
 
-        @Test func updateDraftRejectsUnsupportedGraphQLArguments() throws {
-            try withDraftConfig { config, _ in
-                let result = try executeWriteGraphQL(
-                    config: config,
-                    query: #"mutation { updateDraft(accountId: "personal", draftId: "draft-1", labelIds: ["INBOX"]) { status } }"#,
-                    mode: .draftDefault
-                )
-
-                #expect(result.exitCode == .graphqlExecutionError)
-                #expect(graphQLErrorCode(result.body) == GmailGatewayErrorCode.invalidArgument.rawValue)
-            }
-        }
-
-        // MARK: - deleteDraft
-
         @Test func deleteDraftIssuesProviderDeleteAndReportsDraftId() throws {
             try withDraftConfig { config, _ in
                 TestGmailRequestCaptureProtocol.reset()
@@ -282,75 +384,29 @@ extension GmailRequestProtocolTests {
 
         // MARK: - draft reads
 
-        @Test func draftQueryReturnsProviderDraftMetadata() throws {
+        @Test func draftReadKeepsDetailedMailMetadataAndRejectsOutOfRangePages() throws {
             try withDraftConfig { config, _ in
                 try withDraftProviderResponses {
-                    let result = try executeWriteGraphQL(
-                        config: config,
-                        query: #"query { draft(accountId: "personal", draftId: "draft-1") { id } }"#,
-                        mode: .draftDefault
-                    )
-                    let data = try #require(result.body["data"] as? [String: Any])
-                    let draft = try #require(data["draft"] as? [String: Any])
+                    let service = GmailGatewayWriteService(config: config)
+                    let draft = try service.getDraft(accountId: "personal", draftId: "draft-1")
                     let message = try #require(draft["message"] as? [String: Any])
+                    let from = try #require(message["from"] as? [[String: Any]])
 
                     #expect(draft["id"] as? String == "draft-1")
                     #expect(draft["accountId"] as? String == "personal")
                     #expect(message["id"] as? String == "message-1")
-                }
-            }
-        }
+                    #expect(message["threadId"] as? String == "thread-1")
+                    #expect(message["subject"] as? String == "Existing subject")
+                    let expectedFrom = try canonicalJSON([["raw": "Sender <sender@example.com>"]])
+                    #expect(try canonicalJSON(from) == expectedFrom)
 
-        @Test func draftsQuerySkipsNodeHydrationWhenNodesAreNotSelected() throws {
-            try withDraftConfig { config, _ in
-                try withDraftProviderResponses {
-                    let result = try executeWriteGraphQL(
-                        config: config,
-                        query: #"query { drafts(accountId: "personal", first: 5) { totalCount pageInfo { hasNextPage } } }"#,
-                        mode: .draftDefault
-                    )
-                    let data = try #require(result.body["data"] as? [String: Any])
-                    let drafts = try #require(data["drafts"] as? [String: Any])
-
-                    #expect(drafts["totalCount"] as? Int == 1)
-                    #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == ["/gmail/v1/users/me/drafts"])
-                }
-            }
-        }
-
-        @Test func draftsQueryRejectsOutOfRangeFirstBeforeProviderCall() throws {
-            try withDraftConfig { config, _ in
-                TestGmailRequestCaptureProtocol.reset()
-                URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
-                defer {
-                    URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
                     TestGmailRequestCaptureProtocol.reset()
+                    let error = try requireGmailGatewayError {
+                        _ = try service.listDrafts(accountId: "personal", first: 0)
+                    }
+                    #expect(error.code == .invalidArgument)
+                    #expect(TestGmailRequestCaptureProtocol.capturedURLs.isEmpty)
                 }
-
-                let result = try executeWriteGraphQL(
-                    config: config,
-                    query: #"query { drafts(accountId: "personal", first: 0) { totalCount } }"#,
-                    mode: .draftDefault
-                )
-
-                #expect(result.exitCode == .graphqlExecutionError)
-                #expect(graphQLErrorCode(result.body) == GmailGatewayErrorCode.invalidArgument.rawValue)
-                #expect(TestGmailRequestCaptureProtocol.capturedURLs.isEmpty)
-            }
-        }
-
-        // MARK: - sendDraft (sender only)
-
-        @Test func draftGatewayRejectsSendDraft() throws {
-            try withDraftConfig { config, _ in
-                let result = try executeWriteGraphQL(
-                    config: config,
-                    query: #"mutation { sendDraft(accountId: "personal", draftId: "draft-1") { status } }"#,
-                    mode: .draftDefault
-                )
-
-                #expect(result.exitCode == .graphqlExecutionError)
-                #expect(graphQLErrorCode(result.body) == GmailGatewayErrorCode.sendDisabledInDraftGateway.rawValue)
             }
         }
 
@@ -400,137 +456,6 @@ extension GmailRequestProtocolTests {
         }
 
         // MARK: - Threaded draft creation (draft binary keeps these; they never send)
-
-        @Test func draftGatewayCreatesThreadedReplyDraftWithoutSending() throws {
-            try withDraftConfig { config, _ in
-                try withDraftProviderResponses {
-                    let result = try executeWriteGraphQL(
-                        config: config,
-                        query: #"mutation { createReplyDraft(accountId: "personal", messageId: "message-1", textBody: "Reply body") { status operation draftId } }"#,
-                        mode: .draftDefault
-                    )
-                    let data = try #require(result.body["data"] as? [String: Any])
-                    let payload = try #require(data["createReplyDraft"] as? [String: Any])
-                    let rawMessage = try createdDraftRawMessage()
-
-                    #expect(result.exitCode == .success)
-                    #expect(payload["operation"] as? String == "CREATE_DRAFT")
-                    #expect(payload["status"] as? String == "DRAFT_CREATED")
-                    #expect(rawMessage.contains("Subject: Re: Existing subject"))
-                    #expect(rawMessage.contains("In-Reply-To: <draft-1@mail.example.com>"))
-                    #expect(rawMessage.contains("References: <root@mail.example.com> <draft-1@mail.example.com>"))
-                    #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path).contains("/gmail/v1/users/me/drafts"))
-                    #expect(!TestGmailRequestCaptureProtocol.capturedURLs.map(\.path).contains("/gmail/v1/users/me/messages/send"))
-                }
-            }
-        }
-
-        @Test func draftGatewayCreatesThreadedForwardDraftWithoutSending() throws {
-            try withDraftConfig { config, _ in
-                try withDraftProviderResponses {
-                    let result = try executeWriteGraphQL(
-                        config: config,
-                        query: #"mutation { createForwardDraft(accountId: "personal", messageId: "message-1", to: ["fwd@example.com"]) { status operation } }"#,
-                        mode: .draftDefault
-                    )
-                    let data = try #require(result.body["data"] as? [String: Any])
-                    let payload = try #require(data["createForwardDraft"] as? [String: Any])
-                    let rawMessage = try createdDraftRawMessage()
-
-                    #expect(result.exitCode == .success)
-                    #expect(payload["operation"] as? String == "CREATE_DRAFT")
-                    #expect(rawMessage.contains("Subject: Fwd: Existing subject"))
-                    #expect(rawMessage.contains("To: fwd@example.com"))
-                    #expect(rawMessage.contains("Forwarded message"))
-                    #expect(!TestGmailRequestCaptureProtocol.capturedURLs.map(\.path).contains("/gmail/v1/users/me/messages/send"))
-                }
-            }
-        }
-
-        // MARK: - Reader mailbox metadata
-
-        @Test func labelsQueryReturnsMailboxLabels() throws {
-            try withDraftConfig { config, _ in
-                TestGmailRequestCaptureProtocol.reset()
-                TestGmailRequestCaptureProtocol.labelListResponseData = Data("""
-                {
-                  "labels": [
-                    { "id": "INBOX", "name": "INBOX", "type": "system" },
-                    { "id": "Label_1", "name": "Work", "type": "user", "labelListVisibility": "labelShow" },
-                    { "name": "unusable label without an id" }
-                  ]
-                }
-                """.utf8)
-                URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
-                defer {
-                    URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
-                    TestGmailRequestCaptureProtocol.reset()
-                }
-
-                let result = try executeReaderGraphQL(
-                    config: config,
-                    query: #"query { labels(accountId: "personal") { id name type } }"#
-                )
-                let data = try #require(result.body["data"] as? [String: Any])
-                let labels = try #require(data["labels"] as? [[String: Any]])
-
-                #expect(result.exitCode == .success)
-                #expect(labels.count == 2)
-                #expect(labels.first?["id"] as? String == "INBOX")
-                #expect(labels.last?["name"] as? String == "Work")
-                #expect(labels.last?["labelListVisibility"] as? String == "labelShow")
-                #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == ["/gmail/v1/users/me/labels"])
-            }
-        }
-
-        @Test func profileQueryReturnsMailboxTotals() throws {
-            try withDraftConfig { config, _ in
-                TestGmailRequestCaptureProtocol.reset()
-                TestGmailRequestCaptureProtocol.profileResponseData = Data("""
-                {
-                  "emailAddress": "person@example.com",
-                  "messagesTotal": 1200,
-                  "threadsTotal": 900,
-                  "historyId": "123456"
-                }
-                """.utf8)
-                URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
-                defer {
-                    URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
-                    TestGmailRequestCaptureProtocol.reset()
-                }
-
-                let result = try executeReaderGraphQL(
-                    config: config,
-                    query: #"query { profile(accountId: "personal") { emailAddress messagesTotal } }"#
-                )
-                let data = try #require(result.body["data"] as? [String: Any])
-                let profile = try #require(data["profile"] as? [String: Any])
-
-                #expect(profile["accountId"] as? String == "personal")
-                #expect(profile["emailAddress"] as? String == "person@example.com")
-                #expect(profile["messagesTotal"] as? Int == 1_200)
-                #expect(profile["threadsTotal"] as? Int == 900)
-                #expect(profile["historyId"] as? String == "123456")
-                #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == ["/gmail/v1/users/me/profile"])
-            }
-        }
-
-        @Test func readerRejectsSendDraftAndThreadedDraftCreation() throws {
-            let queries = [
-                #"mutation { sendDraft(accountId: "personal", draftId: "d1") { status } }"#,
-                #"mutation { createReplyDraft(accountId: "personal", messageId: "m1", textBody: "B") { status } }"#,
-                #"mutation { createForwardDraft(accountId: "personal", messageId: "m1", to: ["a@example.com"]) { status } }"#
-            ]
-            try withDraftConfig { config, _ in
-                for query in queries {
-                    let result = try executeReaderGraphQL(config: config, query: query)
-
-                    #expect(result.exitCode == .graphqlExecutionError)
-                    #expect(graphQLErrorCode(result.body) == GmailGatewayErrorCode.sendDisabledInReader.rawValue)
-                }
-            }
-        }
 
         // MARK: - Helpers
 
@@ -645,6 +570,34 @@ extension GmailRequestProtocolTests {
     }
 }
 
+private func draftRoot(in query: String) -> String? {
+    [
+        "createReplyDraft", "createForwardDraft", "createDraft", "updateDraft", "deleteDraft",
+        "sendMessage", "replyMessage", "forwardMessage", "sendDraft", "drafts", "draft"
+    ].first { query.contains("\($0)(") || query.contains("\($0) {") }
+}
+
+private func draftProviderBody(for root: String) -> [String: Any]? {
+    switch root {
+    case "createDraft": ["message": ["raw": gatewayPlainMIME(to: "a@example.test", subject: nil, body: "x")]]
+    case "createReplyDraft": ["message": ["raw": gatewayReplyMIME(), "threadId": "thread-id"]]
+    case "createForwardDraft": ["message": ["raw": gatewayForwardMIME(), "threadId": "thread-id"]]
+    case "updateDraft": ["id": "draft-1", "message": ["raw": gatewayPlainMIME(to: "a@example.test", subject: nil, body: "x"), "threadId": "thread-id"]]
+    case "sendMessage": ["raw": gatewayPlainMIME(to: "a@example.test", subject: nil, body: "x")]
+    case "replyMessage": ["raw": gatewayReplyMIME(), "threadId": "thread-id"]
+    case "forwardMessage": ["raw": gatewayForwardMIME(), "threadId": "thread-id"]
+    case "sendDraft": ["id": "draft-1"]
+    default: nil
+    }
+}
+
+private func draftEnvelope(root: String, status: String) -> [String: Any] {
+    switch root {
+    case "drafts": [root: ["totalCount": 0]]
+    case "draft": [root: ["id": "draft-1"]]
+    default: [root: ["status": status]]
+    }
+}
 private func graphQLErrorCode(_ body: [String: Any]) -> String? {
     guard let errors = body["errors"] as? [[String: Any]],
           let extensions = errors.first?["extensions"] as? [String: Any] else {
@@ -667,4 +620,75 @@ private func updatedDraftRawMessage() throws -> String {
     let raw = try #require(message["raw"] as? String)
     let data = try #require(dataFromBase64URLString(raw))
     return try #require(String(data: data, encoding: .utf8))
+}
+
+private func normalizedDraftMIME(_ raw: String) -> String {
+    raw
+        .replacingOccurrences(
+            of: "gmail-gateway-alt-[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}",
+            with: "<alternative>",
+            options: .regularExpression
+        )
+        .replacingOccurrences(
+            of: "gmail-gateway-[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}",
+            with: "<mixed>",
+            options: .regularExpression
+        )
+}
+
+private func expectedUpdatedDraftMIME(
+    subject: String,
+    textBody: String,
+    htmlBody: String?,
+    attachments: [(String, String)]
+) -> String {
+    var lines = [
+        "From: person@example.com",
+        "To: recipient@example.com",
+        "Cc: copied@example.com",
+        "Subject: \(subject)",
+        "In-Reply-To: <origin@mail.example.com>",
+        "References: <root@mail.example.com>",
+        "MIME-Version: 1.0",
+        "Content-Type: multipart/mixed; boundary=\"<mixed>\"",
+        ""
+    ]
+    if let htmlBody {
+        lines += [
+            "--<mixed>",
+            "Content-Type: multipart/alternative; boundary=\"<alternative>\"",
+            "",
+            "--<alternative>",
+            "Content-Type: text/plain; charset=utf-8",
+            "Content-Transfer-Encoding: 8bit",
+            "",
+            textBody,
+            "--<alternative>",
+            "Content-Type: text/html; charset=utf-8",
+            "Content-Transfer-Encoding: 8bit",
+            "",
+            htmlBody,
+            "--<alternative>--"
+        ]
+    } else {
+        lines += [
+            "--<mixed>",
+            "Content-Type: text/plain; charset=utf-8",
+            "Content-Transfer-Encoding: 8bit",
+            "",
+            textBody
+        ]
+    }
+    for (filename, base64) in attachments {
+        lines += [
+            "--<mixed>",
+            "Content-Type: text/plain; name=\"\(filename)\"",
+            "Content-Disposition: attachment; filename=\"\(filename)\"",
+            "Content-Transfer-Encoding: base64",
+            "",
+            base64
+        ]
+    }
+    lines.append("--<mixed>--")
+    return lines.joined(separator: "\r\n")
 }

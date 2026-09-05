@@ -16,8 +16,15 @@ let package = Package(
     .executable(name: "gmail-gateway-message-box", targets: ["GmailGatewayMessageBox"]),
     .executable(name: "gmail-gateway-swift-smoke-tests", targets: ["GmailGatewaySwiftSmokeTests"])
   ],
+  dependencies: [
+    // Replace this operator-managed local path with a pinned URL revision at release time.
+    .package(path: "../../gateway-sdk-kit")
+  ],
   targets: [
-    .target(name: "GmailGatewayCore"),
+    .target(
+      name: "GmailGatewayCore",
+      dependencies: [.product(name: "GatewaySDKKit", package: "gateway-sdk-kit")]
+    ),
     .executableTarget(
       name: "GmailGatewayReader",
       dependencies: ["GmailGatewayCore"]

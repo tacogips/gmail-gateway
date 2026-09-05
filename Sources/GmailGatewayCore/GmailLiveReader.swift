@@ -53,7 +53,12 @@ struct GmailLiveReader {
             let node: MailThread?
             if request.includeNodeDetails {
                 if request.includeFullNodeDetails {
-                    node = try getThreadFull(threadId: item.id, account: request.account, accessToken: accessToken)
+                    let thread = try getThreadFull(
+                        threadId: item.id,
+                        account: request.account,
+                        accessToken: accessToken
+                    )
+                    node = preservingListedSummary(item, in: thread)
                 } else {
                     node = buildListedThread(account: request.account, item: item)
                 }
@@ -306,6 +311,27 @@ private func buildListedThread(account: AccountConfig, item: GmailListedThread) 
             attachmentId: nil,
             partId: nil,
             labelIds: [],
+            historyId: item.historyId
+        ))
+    )
+}
+
+private func preservingListedSummary(_ item: GmailListedThread, in thread: MailThread) -> MailThread {
+    let gmail = thread.providerMetadata?.gmail
+    return MailThread(
+        id: thread.id,
+        accountId: thread.accountId,
+        subject: thread.subject,
+        snippet: item.snippet,
+        messages: thread.messages,
+        labels: thread.labels,
+        providerMetadata: MailProviderMetadata(gmail: GmailMailMetadata(
+            accountId: gmail?.accountId,
+            messageId: gmail?.messageId,
+            threadId: gmail?.threadId,
+            attachmentId: gmail?.attachmentId,
+            partId: gmail?.partId,
+            labelIds: gmail?.labelIds,
             historyId: item.historyId
         ))
     )

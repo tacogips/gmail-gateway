@@ -1,4 +1,5 @@
 import Foundation
+import GatewaySDKKit
 
 public enum GmailGatewayCLIMode: Sendable {
     case reader
@@ -133,8 +134,9 @@ public struct GmailGatewayCLI {
             ).run(pretty: pretty)
         case "graphql":
             return try runGraphQL(
+                positionals: Array(parsed.positionals.dropFirst()),
                 flags: parsed.flags,
-                configPath: configPath,
+                repeatedFlags: parsed.repeatedFlags,
                 environment: environment,
                 pretty: pretty
             )
@@ -179,33 +181,159 @@ public struct GmailGatewayCLI {
     }
 
     private func runGraphQL(
+        positionals: [String],
         flags: [String: StringOrBool],
-        configPath: String?,
+        repeatedFlags: [String: [StringOrBool]],
         environment: [String: String],
         pretty: Bool
     ) throws -> GmailGatewayCommandResult {
-        try rejectUnsupportedVariables(flags: flags)
-        let config = try GmailGatewayConfigLoader.loadConfig(configPath: configPath, environment: environment)
-        let query = try loadQuery(flags: flags)
-        let result: (body: [String: Any], exitCode: GmailGatewayExitCode)
-        switch mode {
-        case .reader:
-            result = try executeReaderGraphQL(config: config, query: query)
-        case .draftGateway:
-            result = try executeWriteGraphQL(config: config, query: query, mode: .draftDefault)
-        case .directSender:
-            result = try executeWriteGraphQL(config: config, query: query, mode: .directSend)
-        case .mailboxThreads:
-            result = try executeMailboxGraphQL(config: config, query: query)
-        case .messageBox:
-            result = try executeMessageBoxGraphQL(config: config, query: query)
+        let subcommand = positionals.first
+        try validateGraphQLInvocation(positionals: positionals, repeatedFlags: repeatedFlags)
+        let catalog = GatewaySchemaCatalog.gmail(mode: mode)
+        if subcommand == "schema" {
+            return GmailGatewayCommandResult(exitCode: 0, stdout: catalog.sdl(), stderr: "")
         }
+        if subcommand == "search" {
+            guard let pattern = positionals.dropFirst().first else {
+                throw GmailGatewayError("graphql search requires a regex", code: .invalidArgument, exitCode: .invalidCliUsage)
+            }
+            let matches: [GatewaySchemaSearch.Match]
+            do {
+                let kinds = try graphQLSearchKinds(flags)
+                let options = GatewaySchemaSearch.Options(
+                    kinds: kinds,
+                    includeReferencedTypes: try getBooleanFlag(flags, "include-referenced-types"),
+                    limit: try optionalLimit(flags)
+                )
+                matches = try GatewaySchemaSearch(catalog: catalog).search(pattern, options: options)
+            } catch let error as GatewaySDKError {
+                return try graphQLCatalogErrorResult(error, pretty: pretty)
+            }
+            let encoded = try JSONEncoder().encode(matches)
+            let json = String(bytes: encoded, encoding: .utf8) ?? ""
+            let payload = try GatewayJSONValue.parse(json)
+            return GmailGatewayCommandResult(exitCode: 0, stdout: try payload.jsonString(pretty: pretty) + "\n", stderr: "")
+        }
+        let variables = try loadGatewayVariables(flags: flags)
+        let document: String
+        if subcommand == "operation" {
+            guard let operation = positionals.dropFirst().first else {
+                throw GmailGatewayError("graphql operation requires an operation name", code: .invalidArgument, exitCode: .invalidCliUsage)
+            }
+            let selection = try getStringFlag(flags, "select").map { GatewaySelection.fields($0.split(separator: ",").map(String.init)) } ?? .default
+            do {
+                // Build from the full catalog so a known operation outside this binary's
+                // authorized catalog reaches the shared runtime authorization boundary.
+                // The executor then reports CAPABILITY_DENIED with the mode tier rather
+                // than treating the operation as unknown.
+                document = try GmailGatewayOperationBoundary
+                    .build(.init(operation: operation, variables: variables, selection: selection)).document
+            } catch let error as GatewaySDKError {
+                return try graphQLCatalogErrorResult(error, pretty: pretty)
+            }
+        } else {
+            guard subcommand == nil || subcommand == "query" else {
+                throw GmailGatewayError("graphql requires query, schema, search, or operation", code: .invalidArgument, exitCode: .invalidCliUsage)
+            }
+            document = try loadQuery(flags: flags)
+        }
+        var effectiveEnvironment = environment
+        if let configPath = try getStringFlag(flags, "config") { effectiveEnvironment["GMAIL_GATEWAY_CONFIG"] = configPath }
+        let envelope = awaitEnvelope(query: document, variables: variables, environment: effectiveEnvironment)
+        return try graphQLEnvelopeResult(envelope, pretty: pretty)
+    }
+
+    private func validateGraphQLInvocation(
+        positionals: [String],
+        repeatedFlags: [String: [StringOrBool]]
+    ) throws {
+        let subcommand = positionals.first
+        let allowedFlags: Set<String>
+        switch subcommand {
+        case nil, "query":
+            guard positionals.count <= 1 else {
+                throw invalidGraphQLInvocation("graphql query does not accept extra positional arguments")
+            }
+            allowedFlags = ["config", "pretty", "query", "query-file", "variables", "variables-file"]
+        case "schema":
+            guard positionals.count == 1 else {
+                throw invalidGraphQLInvocation("graphql schema does not accept positional arguments")
+            }
+            allowedFlags = []
+        case "search":
+            guard positionals.count == 2 else {
+                throw invalidGraphQLInvocation("graphql search requires exactly one regex")
+            }
+            allowedFlags = ["pretty", "kinds", "include-referenced-types", "limit"]
+        case "operation":
+            guard positionals.count == 2 else {
+                throw invalidGraphQLInvocation("graphql operation requires exactly one operation name")
+            }
+            allowedFlags = ["config", "pretty", "variables", "variables-file", "select"]
+        default:
+            throw invalidGraphQLInvocation("graphql requires query, schema, search, or operation")
+        }
+
+        let unsupported = Set(repeatedFlags.keys).subtracting(allowedFlags)
+        guard unsupported.isEmpty else {
+            let names = unsupported.sorted().map { "--\($0)" }.joined(separator: ", ")
+            throw invalidGraphQLInvocation("Unsupported GraphQL flag: \(names)")
+        }
+        let duplicates = repeatedFlags.filter { $0.value.count > 1 }.keys.sorted()
+        guard duplicates.isEmpty else {
+            let names = duplicates.map { "--\($0)" }.joined(separator: ", ")
+            throw invalidGraphQLInvocation("Duplicate GraphQL flag: \(names)")
+        }
+    }
+
+    private func invalidGraphQLInvocation(_ message: String) -> GmailGatewayError {
+        GmailGatewayError(message, code: .invalidArgument, exitCode: .invalidCliUsage)
+    }
+
+    private func graphQLCatalogErrorResult(
+        _ error: GatewaySDKError,
+        pretty: Bool
+    ) throws -> GmailGatewayCommandResult {
+        let envelope = GmailGatewayOperationBoundary.errorEnvelope(error)
+        return try graphQLEnvelopeResult(envelope, pretty: pretty)
+    }
+
+    private func graphQLEnvelopeResult(
+        _ envelope: GatewayEnvelope,
+        pretty: Bool
+    ) throws -> GmailGatewayCommandResult {
         return GmailGatewayCommandResult(
-            exitCode: result.exitCode.rawValue,
-            stdout: jsonString(result.body, pretty: pretty) + "\n",
+            exitCode: envelope.exitCode,
+            stdout: try GmailGatewayGraphQLEnvelopeSerializer.output(envelope, pretty: pretty),
             stderr: ""
         )
     }
+
+    private func awaitEnvelope(query: String, variables: [String: GatewayJSONValue], environment: [String: String]) -> GatewayEnvelope {
+        let semaphore = DispatchSemaphore(value: 0)
+        let result = LockedEnvelope()
+        let selectedMode = mode
+        Self.executorBridgeQueue.async {
+            Task.detached {
+                result.value = await GmailGatewayGraphQLExecutor().run(
+                    query: query,
+                    variables: variables,
+                    mode: selectedMode,
+                    environment: environment,
+                    configurationPolicy: .cliDefaults
+                )
+                semaphore.signal()
+            }
+        }
+        semaphore.wait()
+        return result.value
+    }
+
+    private static let executorBridgeQueue = DispatchQueue(
+        label: "gmail-gateway.cli.executor-bridge",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
 
     private func runConfig(
         subcommand: String?,
@@ -356,7 +484,8 @@ private func rootHelpText(mode: GmailGatewayCLIMode) -> String {
     switch mode {
     case .reader:
         writeNote = """
-          This binary is read-only. Write mutations are rejected with SEND_DISABLED_IN_READER.
+          This binary is read-only. Mutations outside its authorized GraphQL catalog are
+          rejected with CAPABILITY_DENIED before resolver or provider dispatch.
           Read surface: accounts, account, threads, thread, message, messageFileSet,
           attachment, labels, and profile.
         """
@@ -367,7 +496,8 @@ private func rootHelpText(mode: GmailGatewayCLIMode) -> String {
           queries, and it can never send mail. createReplyDraft and createForwardDraft
           prepare threaded reply and forward drafts without sending them.
           sendMessage, replyMessage, forwardMessage, and sendDraft are rejected with
-          SEND_DISABLED_IN_DRAFT_GATEWAY; use gmail-gateway-sender for those.
+          CAPABILITY_DENIED before resolver or provider dispatch; use
+          gmail-gateway-sender for those.
 
           updateDraft retains any header or body field it is not given. Supplying textBody
           and/or htmlBody replaces the whole body with exactly what was supplied. Attachments
@@ -425,7 +555,10 @@ Usage:
 
 Commands:
   doctor
-  graphql --query <query>
+  graphql [query] --query <query>|--query-file <path> [--variables <json>|--variables-file <path>] [--pretty]
+  graphql schema
+  graphql search <regex> [--kinds query,mutation,object,inputObject,enumeration] [--include-referenced-types] [--limit <n>]
+  graphql operation <name> [--variables <json>|--variables-file <path>] [--select a.b,c]
   config validate
   auth <login|revoke|status> --credential <id>
   cache prune [--account <id>|--all]
@@ -483,4 +616,37 @@ Output:
   so files from different messages cannot overwrite each other.
 
 """
+}
+
+private final class LockedEnvelope: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = GatewayEnvelope.failure(GmailGatewayError("executor did not return", code: .unexpectedError, exitCode: .generalError), exitCode: 1)
+
+    var value: GatewayEnvelope {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
+private func graphQLSearchKinds(_ flags: [String: StringOrBool]) throws -> Set<GatewayDefinitionKind> {
+    guard let value = try getStringFlag(flags, "kinds") else { return [.query, .mutation, .object, .inputObject, .enumeration] }
+    let kinds = value.split(separator: ",").compactMap { GatewayDefinitionKind(rawValue: String($0)) }
+    guard !kinds.isEmpty, kinds.count == value.split(separator: ",").count else {
+        throw GmailGatewayError("--kinds must contain schema definition kinds", code: .invalidArgument, exitCode: .invalidCliUsage)
+    }
+    return Set(kinds)
+}
+
+private func optionalLimit(_ flags: [String: StringOrBool]) throws -> Int? {
+    guard let raw = try getStringFlag(flags, "limit") else {
+        return nil
+    }
+    guard let value = Int(raw), value > 0 else {
+        throw GmailGatewayError(
+            "--limit must be a positive integer",
+            code: .invalidArgument,
+            exitCode: .invalidCliUsage
+        )
+    }
+    return value
 }

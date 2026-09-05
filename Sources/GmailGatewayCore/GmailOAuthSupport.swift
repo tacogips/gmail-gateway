@@ -172,56 +172,108 @@ func validGmailAccessToken(
     )
 }
 
-func performGmailHTTPRequest(_ request: URLRequest, context: String) throws -> (data: Data, response: HTTPURLResponse) {
+enum GmailHTTPRequestEffect: Equatable {
+    case safeToCancel
+    case gmailMutation
+}
+
+func performGmailHTTPRequest(
+    _ request: URLRequest,
+    context: String,
+    effect: GmailHTTPRequestEffect = .safeToCancel
+) throws -> (data: Data, response: HTTPURLResponse) {
     let maxAttempts = gmailHTTPMaxAttempts(for: request)
+    let mutationMayHaveIrreversibleEffect = effect == .gmailMutation
     var attempt = 1
     while true {
-        let resolved = try performSingleGmailHTTPRequest(request, context: context)
+        try GmailGatewayProviderCancellationContext.throwIfCancelled()
+        try GmailGatewayProviderAttemptBudgetContext.consumeAttempt()
+        let resolved: (data: Data, response: HTTPURLResponse)
+        var requestWasDispatched = false
+        do {
+            resolved = try performSingleGmailHTTPRequest(
+                request,
+                context: context,
+                cancelsWhenExecutionIsCancelled: !mutationMayHaveIrreversibleEffect,
+                requestWasDispatched: &requestWasDispatched
+            )
+        } catch {
+            if mutationMayHaveIrreversibleEffect,
+               requestWasDispatched {
+                throw GmailGatewayError(
+                    "Gmail mutation outcome is unknown after the response was lost; do not retry automatically",
+                    code: .mutationOutcomeUnknown,
+                    exitCode: .graphqlExecutionError
+                )
+            }
+            throw error
+        }
         if (200..<300).contains(resolved.response.statusCode) {
             return resolved
         }
+        if mutationMayHaveIrreversibleEffect {
+            throw gmailProviderHTTPError(context: context, response: resolved.response, data: resolved.data)
+        }
+        try GmailGatewayProviderCancellationContext.throwIfCancelled()
         if attempt < maxAttempts,
            gmailHTTPStatusIsRetryable(resolved.response.statusCode) {
+            try GmailGatewayProviderCancellationContext.throwIfCancelled()
             Thread.sleep(forTimeInterval: gmailHTTPRetryDelay(attempt: attempt))
+            try GmailGatewayProviderCancellationContext.throwIfCancelled()
             attempt += 1
             continue
         }
-        let code: GmailGatewayErrorCode = resolved.response.statusCode == 429 ? .providerRateLimited : .providerApiError
-        throw GmailGatewayError(
-            context,
-            code: code,
-            exitCode: .providerApiError,
-            details: gmailProviderErrorDetails(statusCode: resolved.response.statusCode, data: resolved.data)
-        )
+        throw gmailProviderHTTPError(context: context, response: resolved.response, data: resolved.data)
     }
 }
 
 private func performSingleGmailHTTPRequest(
     _ request: URLRequest,
-    context: String
+    context: String,
+    cancelsWhenExecutionIsCancelled: Bool,
+    requestWasDispatched: inout Bool
 ) throws -> (data: Data, response: HTTPURLResponse) {
     let semaphore = DispatchSemaphore(value: 0)
     let box = HTTPResultBox()
-    URLSession.shared.dataTask(with: request) { data, response, error in
+    let task = URLSession.shared.dataTask(with: request) { data, response, error in
         defer {
             semaphore.signal()
+        }
+        if let httpResponse = response as? HTTPURLResponse {
+            box.store(.success((data ?? Data(), httpResponse)))
+            return
         }
         if let error {
             box.store(.failure(error))
             return
         }
-        guard let data,
-              let httpResponse = response as? HTTPURLResponse else {
-            box.store(.failure(GmailGatewayError(
-                "Gmail API response was empty",
-                code: .providerApiError,
-                exitCode: .providerApiError
-            )))
-            return
-        }
-        box.store(.success((data, httpResponse)))
-    }.resume()
-    semaphore.wait()
+        box.store(.failure(GmailGatewayError(
+            "Gmail API response was empty",
+            code: .providerApiError,
+            exitCode: .providerApiError
+        )))
+    }
+    let cancellationIdentifier = try GmailGatewayProviderCancellationContext.start(
+        task,
+        cancelsWhenExecutionIsCancelled: cancelsWhenExecutionIsCancelled
+    )
+    requestWasDispatched = cancellationIdentifier != nil
+    defer { GmailGatewayProviderCancellationContext.finish(cancellationIdentifier) }
+    if cancellationIdentifier == nil {
+        task.resume()
+        requestWasDispatched = true
+    }
+    if semaphore.wait(timeout: gmailHTTPResponseDeadline(for: request)) == .timedOut {
+        task.cancel()
+        throw GmailGatewayError(
+            "Gmail API response did not arrive before the request deadline",
+            code: .providerApiError,
+            exitCode: .providerApiError
+        )
+    }
+    if cancelsWhenExecutionIsCancelled {
+        try GmailGatewayProviderCancellationContext.throwIfCancelled()
+    }
 
     let resolved: (data: Data, response: HTTPURLResponse)
     do {
@@ -245,9 +297,37 @@ private func performSingleGmailHTTPRequest(
     return resolved
 }
 
+/// Applies an absolute application deadline to a response that may otherwise keep
+/// delivering bytes and reset URLSession's inactivity timeout. Gmail request builders
+/// use 30 seconds; the cap prevents a caller-owned request from extending a provider
+/// worker beyond that bounded interval.
+private func gmailHTTPResponseDeadline(for request: URLRequest) -> DispatchTime {
+    let configuredInterval = request.timeoutInterval
+    let interval = configuredInterval > 0
+        ? min(configuredInterval, gmailHTTPMaximumResponseWait)
+        : gmailHTTPMaximumResponseWait
+    return .now() + interval
+}
+
+private let gmailHTTPMaximumResponseWait: TimeInterval = 30
+
 private func gmailHTTPMaxAttempts(for request: URLRequest) -> Int {
     let method = request.httpMethod?.uppercased() ?? "GET"
     return method == "GET" ? 3 : 1
+}
+
+private func gmailProviderHTTPError(
+    context: String,
+    response: HTTPURLResponse,
+    data: Data
+) -> GmailGatewayError {
+    let code: GmailGatewayErrorCode = response.statusCode == 429 ? .providerRateLimited : .providerApiError
+    return GmailGatewayError(
+        context,
+        code: code,
+        exitCode: .providerApiError,
+        details: gmailProviderErrorDetails(statusCode: response.statusCode, data: data)
+    )
 }
 
 private func gmailHTTPStatusIsRetryable(_ statusCode: Int) -> Bool {

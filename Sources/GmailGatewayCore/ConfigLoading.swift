@@ -14,6 +14,12 @@ private struct CredentialPathRequest {
     let configValue: String?
     let environment: [String: String]
     let context: String
+    let policy: GmailGatewayConfigurationPolicy
+}
+
+public enum GmailGatewayConfigurationPolicy: String, Sendable {
+    case cliDefaults
+    case strictEnvironment
 }
 
 public enum GmailGatewayConfigLoader {
@@ -89,13 +95,25 @@ public enum GmailGatewayConfigLoader {
     public static func loadConfig(
         configPath: String? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        validateOAuthClientSecrets: Bool = false
+        validateOAuthClientSecrets: Bool = false,
+        policy: GmailGatewayConfigurationPolicy = .cliDefaults
     ) throws -> GmailGatewayConfig {
         let explicitConfigPath = nonBlank(configPath) ?? nonBlank(environment["GMAIL_GATEWAY_CONFIG"])
-        let usesImplicitDefaultConfig = explicitConfigPath == nil
-        let selectedConfigPath = normalizedPath(
-            explicitConfigPath ?? resolveDefaultConfigPath(environment: environment)
-        )
+        let usesImplicitDefaultConfig = explicitConfigPath == nil && policy == .cliDefaults
+        let selectedConfigPath: String
+        if policy == .strictEnvironment {
+            guard let explicitConfigPath else {
+                throw configError("SDK execution requires GMAIL_GATEWAY_CONFIG in its supplied environment")
+            }
+            guard explicitConfigPath.hasPrefix("/"), !usesHomeExpansion(explicitConfigPath) else {
+                throw configError("SDK GMAIL_GATEWAY_CONFIG must be an absolute non-home-expanded path")
+            }
+            selectedConfigPath = normalizedPath(explicitConfigPath)
+        } else {
+            selectedConfigPath = normalizedPath(
+                explicitConfigPath ?? resolveDefaultConfigPath(environment: environment)
+            )
+        }
         let source: String
         do {
             source = try String(contentsOfFile: selectedConfigPath, encoding: .utf8)
@@ -123,9 +141,19 @@ public enum GmailGatewayConfigLoader {
             throw configError("accounts must be a non-empty array")
         }
 
-        let storage = try parseStorageConfig(storageRecord, configPath: selectedConfigPath)
+        let storage = try parseStorageConfig(
+            storageRecord,
+            configPath: selectedConfigPath,
+            policy: policy
+        )
         let credentials = try parsed.credentials.enumerated().map { index, record in
-            try parseCredentialConfig(record, index: index, configPath: selectedConfigPath, environment: environment)
+            try parseCredentialConfig(
+                record,
+                index: index,
+                configPath: selectedConfigPath,
+                environment: environment,
+                policy: policy
+            )
         }
         let accounts = try parsed.accounts.enumerated().map { index, record in
             try parseAccountConfig(record, index: index)
@@ -192,7 +220,8 @@ public enum GmailGatewayConfigLoader {
                 pathKey: "oauth_client_secret_path",
                 configValue: "google-client.json",
                 environment: environment,
-                context: "credentials.\(defaultCredentialId).oauth_client_secret_path"
+                context: "credentials.\(defaultCredentialId).oauth_client_secret_path",
+                policy: .cliDefaults
             )),
             oauthClientSecretJSON: credentialJSONEnvValue(
                 credentialId: defaultCredentialId,
@@ -207,7 +236,8 @@ public enum GmailGatewayConfigLoader {
                     .appendingPathComponent("\(defaultCredentialId).json")
                     .path,
                 environment: environment,
-                context: "credentials.\(defaultCredentialId).token_store_path"
+                context: "credentials.\(defaultCredentialId).token_store_path",
+                policy: .cliDefaults
             )),
             tokenStoreJSON: credentialJSONEnvValue(
                 credentialId: defaultCredentialId,
@@ -445,21 +475,33 @@ private func splitTomlArray(_ source: String) throws -> [String] {
     return values
 }
 
-private func parseStorageConfig(_ record: [String: Any], configPath: String) throws -> StorageConfig {
+private func parseStorageConfig(
+    _ record: [String: Any],
+    configPath: String,
+    policy: GmailGatewayConfigurationPolicy
+) throws -> StorageConfig {
     StorageConfig(
         cacheDir: try resolveConfigRelativePath(
             configPath: configPath,
-            rawPath: readString(record["cache_dir"], "storage.cache_dir")
+            rawPath: readString(record["cache_dir"], "storage.cache_dir"),
+            policy: policy
         ),
         attachmentDir: try resolveConfigRelativePath(
             configPath: configPath,
-            rawPath: readString(record["attachment_dir"], "storage.attachment_dir")
+            rawPath: readString(record["attachment_dir"], "storage.attachment_dir"),
+            policy: policy
         ),
         allowedSendAttachmentRoots: try readOptionalStringArray(
             record["allowed_send_attachment_roots"],
             "storage.allowed_send_attachment_roots"
         )
-            .map { try resolveConfigRelativePath(configPath: configPath, rawPath: $0) }
+            .map {
+                try resolveConfigRelativePath(
+                    configPath: configPath,
+                    rawPath: $0,
+                    policy: policy
+                )
+            }
     )
 }
 
@@ -467,7 +509,8 @@ private func parseCredentialConfig(
     _ record: [String: Any],
     index: Int,
     configPath: String,
-    environment: [String: String]
+    environment: [String: String],
+    policy: GmailGatewayConfigurationPolicy
 ) throws -> CredentialConfig {
     let contextBase = "credentials[\(index)]"
     let credentialId = try readString(record["id"], "\(contextBase).id")
@@ -496,7 +539,8 @@ private func parseCredentialConfig(
                 "\(contextBase).oauth_client_secret_path"
             ),
             environment: environment,
-            context: "\(contextBase).oauth_client_secret_path"
+            context: "\(contextBase).oauth_client_secret_path",
+            policy: policy
         )),
         oauthClientSecretJSON: oauthClientSecretJSON,
         tokenStorePath: try resolveCredentialPath(CredentialPathRequest(
@@ -505,7 +549,8 @@ private func parseCredentialConfig(
             pathKey: "token_store_path",
             configValue: readOptionalString(record["token_store_path"], "\(contextBase).token_store_path"),
             environment: environment,
-            context: "\(contextBase).token_store_path"
+            context: "\(contextBase).token_store_path",
+            policy: policy
         )),
         tokenStoreJSON: tokenStoreJSON
     )
@@ -566,10 +611,21 @@ private func resolveCredentialPath(_ request: CredentialPathRequest) throws -> S
     guard let selected else {
         throw configError("\(request.context) must be set in config or \(envName)")
     }
-    return try resolveConfigRelativePath(configPath: request.configPath, rawPath: selected)
+    return try resolveConfigRelativePath(
+        configPath: request.configPath,
+        rawPath: selected,
+        policy: request.policy
+    )
 }
 
-private func resolveConfigRelativePath(configPath: String, rawPath: String) throws -> String {
+private func resolveConfigRelativePath(
+    configPath: String,
+    rawPath: String,
+    policy: GmailGatewayConfigurationPolicy
+) throws -> String {
+    if policy == .strictEnvironment, usesHomeExpansion(rawPath) {
+        throw configError("SDK configuration paths must not use home-directory expansion")
+    }
     // Expanding first lets config values use "~/..." as an absolute home path
     // instead of being misread as a config-directory-relative segment.
     let expanded = normalizedPath(rawPath)
@@ -578,6 +634,10 @@ private func resolveConfigRelativePath(configPath: String, rawPath: String) thro
     }
     let configDirectory = URL(fileURLWithPath: configPath).deletingLastPathComponent()
     return normalizedPath(configDirectory.appendingPathComponent(rawPath).path)
+}
+
+private func usesHomeExpansion(_ path: String) -> Bool {
+    path.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("~")
 }
 
 private func validateOAuthClientSecretPaths(_ credentials: [CredentialConfig]) throws {

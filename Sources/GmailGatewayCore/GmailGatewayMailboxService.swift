@@ -49,7 +49,7 @@ struct MailIngestInput: Sendable {
     func queryItems(for operation: GmailGatewayWriteOperation) -> [URLQueryItem] {
         var items: [URLQueryItem] = []
         if let internalDateSource {
-            items.append(URLQueryItem(name: "internalDateSource", value: internalDateSource))
+            items.append(URLQueryItem(name: "internalDateSource", value: gmailInternalDateSourceValue(internalDateSource)))
         }
         if let deleted {
             items.append(URLQueryItem(name: "deleted", value: deleted ? "true" : "false"))
@@ -335,6 +335,14 @@ extension GmailGatewayWriteService {
 }
 
 private let supportedInternalDateSources: Set<String> = ["RECEIVED_TIME", "DATE_HEADER"]
+
+private func gmailInternalDateSourceValue(_ value: String) -> String {
+    switch value {
+    case "RECEIVED_TIME": "receivedTime"
+    case "DATE_HEADER": "dateHeader"
+    default: value
+    }
+}
 
 private func validatedInternalDateSource(_ value: String?) throws -> String? {
     guard let value = nonBlank(value) else {

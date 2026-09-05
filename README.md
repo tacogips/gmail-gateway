@@ -27,6 +27,38 @@ The package uses Swift Package Manager with:
 
 Each binary exposes a strictly separate slice of the GraphQL surface:
 
+## Catalog-driven GraphQL and SDK
+
+GraphQL is parsed, validated, authorized, and projected by the pinned
+`GatewaySDKKit` runtime. `GmailGatewaySchema.swift` is the executable schema source of
+truth; the legacy substring scanner and flat `threads(accountId: ...)` form are removed.
+`threads` accepts exactly one required `input: ThreadSearchInput!` argument, and every
+mutation accepts one required input object.
+
+Each GraphQL form validates its exact positional arguments and flag set before loading
+variables or contacting Gmail. Unknown, duplicate, or inapplicable flags and trailing
+positionals fail with CLI usage error, including for destructive catalog operations.
+
+Raw GraphQL accepts JSON variables, or use the catalog without credentials:
+
+```bash
+swift run gmail-gateway-reader graphql query --query \
+  'query Threads($input: ThreadSearchInput!) { threads(input: $input) { totalCount } }' \
+  --variables '{"input":{"accountId":"personal","first":10}}'
+swift run gmail-gateway-reader graphql schema
+swift run gmail-gateway-reader graphql search 'threads|labels' --include-referenced-types --limit 20
+swift run gmail-gateway-reader graphql operation threads --variables '{"input":{"accountId":"personal"}}'
+```
+
+Swift callers can use `GmailGatewaySDK(mode:)`. Its `catalog`, `schemaSDL()`, and
+`searchSchema` expose the same mode-authorized catalog as the CLI. `execute` uses the
+shared executor and explicit environment, while `invoke` builds named GraphQL operations
+from `gmailFull` before that executor applies mode authorization, so known denied
+operations return `CAPABILITY_DENIED` before resolver or provider dispatch. SDK envelopes
+are canonical, and no SDK execution reads process-global state.
+SDK execution requires `GMAIL_GATEWAY_CONFIG` in that supplied environment and rejects
+home-directory defaults; CLI-only default path discovery remains at the CLI boundary.
+
 All five binaries share one read surface: `accounts`, `account`, `threads`, `thread`,
 `message`, `messageFileSet`, `attachment`, `labels`, and `profile`. Each then owns exactly
 one group of mutations, and rejects every other group with an error naming the binary that
@@ -40,10 +72,19 @@ owns it.
 | `gmail-gateway-threads` | Mailbox mutation: label changes, trash/untrash, label management, permanent delete | `read_modify` (`full` for permanent delete) |
 | `gmail-gateway-message-box` | Mail ingestion: `importMessage`, `insertMessage` | `read_modify` |
 
-Send mutations submitted to `gmail-gateway-draft` are rejected with
-`SEND_DISABLED_IN_DRAFT_GATEWAY` before any provider call, so the draft binary has no
-code path that can transmit mail. Draft mutations and queries submitted to
-`gmail-gateway-reader` are rejected with `SEND_DISABLED_IN_READER`.
+Operations absent from a binary's authorized GraphQL catalog, including send mutations
+submitted to `gmail-gateway-draft` and draft operations submitted to
+`gmail-gateway-reader`, return `CAPABILITY_DENIED` before resolver or provider dispatch.
+The retained `SEND_DISABLED_IN_READER` and `SEND_DISABLED_IN_DRAFT_GATEWAY` error codes
+are service-level compatibility codes; they are not catalog-authorization results. The
+draft binary therefore has no GraphQL path that can transmit mail.
+
+SDK cancellation stops safe reads, retries, and later provider work. A mutation already
+dispatched to Gmail waits up to the 30-second absolute response deadline: a definitive
+2xx remains successful, a definitive HTTP failure remains a provider error, and a lost
+or late response returns non-retryable `MUTATION_OUTCOME_UNKNOWN`. Do not automatically
+retry that outcome. At the exact deadline boundary, an accepted low-severity race can
+report the unknown outcome even when a definitive response completes concurrently.
 
 `createReplyDraft` and `createForwardDraft` build the same threaded reply and forward
 content as `replyMessage` and `forwardMessage`, but always stop at draft creation, so the
@@ -172,7 +213,7 @@ mutation { trashMessage(input: { accountId: "personal", messageId: "1930f0c2b1a4
 
 # Label management
 swift run gmail-gateway-threads graphql --query '
-mutation { createLabel(input: { accountId: "personal", name: "Receipts", labelListVisibility: "labelShow" }) { labelId label { name } } }'
+mutation { createLabel(input: { accountId: "personal", name: "Receipts", labelListVisibility: labelShow }) { operation status label { id name } } }'
 ```
 
 `updateLabel` patches rather than replaces, so naming only `name` leaves the visibility

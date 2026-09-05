@@ -50,7 +50,7 @@ func testMessageFileDownload(cleanup: inout [String]) throws {
         "--config", fixture.configPath,
         "--query", """
         { messageFileSet(accountId: "personal", messageId: "message-2") \
-        { hasFiles files { kind filename hasPayload localPath downloadKey materializationState } } }
+        { hasFiles files { kind filename hasPayload downloadKey materializationState } } }
         """
     ], env: env)
     try assertMessageFileLookup(lookupResult)
@@ -147,7 +147,7 @@ func testRemoteAttachmentDownload(cleanup: inout [String]) throws {
         "--config", fixture.configPath,
         "--query", """
         { attachment(accountId: "personal", messageId: "remote-message", attachmentId: "\(remoteAttachmentId)") \
-        { filename localPath materializationState } }
+        { filename materializationState } }
         """
     ])
     let cachedOutput = try decodeObject(cachedLookup.stdout)

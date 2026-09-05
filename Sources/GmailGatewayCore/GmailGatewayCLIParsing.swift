@@ -1,4 +1,5 @@
 import Foundation
+import GatewaySDKKit
 
 struct ParsedArgs {
     let positionals: [String]
@@ -15,7 +16,7 @@ func parseArguments(_ arguments: [String]) throws -> ParsedArgs {
     var positionals: [String] = []
     var flags: [String: StringOrBool] = [:]
     var repeatedFlags: [String: [StringOrBool]] = [:]
-    let booleanFlags: Set<String> = ["all", "open-browser", "pretty"]
+    let booleanFlags: Set<String> = ["all", "open-browser", "pretty", "include-referenced-types"]
     var index = 0
 
     while index < arguments.count {
@@ -187,14 +188,9 @@ func loadVariables(flags: [String: StringOrBool]) throws -> [String: Any] {
     return [:]
 }
 
-func rejectUnsupportedVariables(flags: [String: StringOrBool]) throws {
-    if flags["variables"] != nil || flags["variables-file"] != nil {
-        throw GmailGatewayError(
-            "GraphQL variables are not supported yet; inline literal arguments in --query or --query-file",
-            code: .invalidArgument,
-            exitCode: .invalidCliUsage
-        )
-    }
+func loadGatewayVariables(flags: [String: StringOrBool]) throws -> [String: GatewayJSONValue] {
+    let variables = try loadVariables(flags: flags)
+    return try variables.mapValues(GatewayJSONValue.init(any:))
 }
 
 private func loadVariablesFile(_ path: String) throws -> [String: Any] {

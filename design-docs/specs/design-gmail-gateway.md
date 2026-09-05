@@ -45,12 +45,15 @@ All business operations are exposed through GraphQL. The CLI surface exists only
 | Binary | Read Mail | Send Mail | GraphQL Schema |
 |--------|-----------|-----------|----------------|
 | `gmail-gateway-reader` | Yes | No | `Query` only, plus local-cache side effects such as attachment materialization |
-| `gmail-gateway-draft` | Planned for Phase 2 | No, never | `Query`, draft `Query` (`drafts`, `draft`), and the draft lifecycle `Mutation` (`createDraft`, `createReplyDraft`, `createForwardDraft`, `updateDraft`, `deleteDraft`) |
-| `gmail-gateway-sender` | Planned for Phase 2 | Yes, explicit direct send plus `sendDraft` | `Query`, draft `Query`, direct-send `Mutation`, and the draft lifecycle `Mutation` |
+| `gmail-gateway-draft` | Yes | No, never | `Query`, draft `Query` (`drafts`, `draft`), and the draft lifecycle `Mutation` (`createDraft`, `createReplyDraft`, `createForwardDraft`, `updateDraft`, `deleteDraft`) |
+| `gmail-gateway-sender` | Yes | Yes, explicit direct send plus `sendDraft` | `Query`, draft `Query`, direct-send `Mutation`, and the draft lifecycle `Mutation` |
 | `gmail-gateway-threads` | Yes | No | `Query` plus the mailbox-mutation `Mutation`: label changes, trash/untrash, label management, and permanent delete |
 | `gmail-gateway-message-box` | Yes | No | `Query` plus the ingestion `Mutation`: `importMessage` and `insertMessage` |
 
-`gmail-gateway-reader` must fail fast if a send mutation is submitted. The current CLI GraphQL executor enforces this by rejecting write root fields before resolver dispatch with `SEND_DISABLED_IN_READER`; it does not yet expose a separate reduced GraphQL schema.
+Every binary publishes an authorized catalog containing exactly the root fields in this
+table. A root field declared by the full Gmail catalog but absent from the binary's
+catalog fails before resolver dispatch with `CAPABILITY_DENIED` and names the mode.
+Credential access-mode checks remain a second, service-owned authorization boundary.
 
 ### GraphQL Transport Modes
 
@@ -60,9 +63,9 @@ The primary mode is a one-shot CLI invocation:
 gmail-gateway-reader graphql --query-file ./query.graphql
 ```
 
-`--variables` and `--variables-file` are reserved for a future GraphQL
-execution engine and are rejected by the current CLI with a clear unsupported
-error.
+`--variables` and `--variables-file` are first-class and mutually exclusive. Each accepts
+a JSON object; the file form reads that object from disk. Values remain separate from the
+GraphQL document and are never interpolated into query text.
 
 An optional long-running mode may be added later:
 
@@ -91,6 +94,8 @@ Credential profiles also declare an explicit `access_mode`:
 
 - `read`: read-only token scope
 - `read_send`: read, draft creation, and send token scopes
+- `read_modify`: read, mailbox mutation, and message insertion scopes
+- `full`: read, send, mailbox mutation, insertion, and permanent-delete scope
 
 This allows `auth login` and `auth status` to detect scope mismatches between configured intent and stored token metadata.
 
@@ -140,7 +145,7 @@ default_label_ids = ["INBOX", "IMPORTANT"]
 
 - `credentials.id` and `accounts.id` must be unique within the file
 - `accounts.credential_id` must reference a credential with the same `provider`
-- `credentials.access_mode` must be `read` or `read_send`
+- `credentials.access_mode` must be `read`, `read_send`, `read_modify`, or `full`
 - `credentials.oauth_client_secret_path` and `credentials.token_store_path` may be omitted when their per-credential env overrides are set
 - token stores must be per account or per principal; sharing one token file across unrelated identities is invalid
 - attachment and cache directories must be created on demand with user-only permissions
@@ -156,8 +161,8 @@ default_label_ids = ["INBOX", "IMPORTANT"]
 - provider-specific details are exposed in a namespaced way only when the canonical model is insufficient
 - the full draft lifecycle (create, update, delete, read) exists in `gmail-gateway-draft`
 - send operations (`sendMessage`, `replyMessage`, `forwardMessage`) exist only in
-  `gmail-gateway-sender`; `gmail-gateway-draft` rejects them with
-  `SEND_DISABLED_IN_DRAFT_GATEWAY`
+  `gmail-gateway-sender`; other modes deny them with `CAPABILITY_DENIED` before
+  resolver dispatch
 - filesystem materialization paths are returned only by explicit gateway
   download commands, not by GraphQL message or file metadata
 - nested thread and message queries return metadata only; payload retrieval is
@@ -167,6 +172,174 @@ default_label_ids = ["INBOX", "IMPORTANT"]
   GraphQL returns vendor-neutral `downloadKey` metadata, and file bytes are
   retrieved only by an explicit gateway download command. Callers may repeat
   `--key` to download multiple selected files in one gateway invocation.
+
+### Phase 1d Normative Catalog and Runtime Contract
+
+Phase 1d is the single `issue-resolution` work package identified by
+`/Users/taco/gits/tacogips/gmail-gateway-worktrees/gateway-sdk@feat/gateway-sdk:phase-1d`.
+Its accepted planning decision is `accepted_with_low_findings` (`comm-001238`,
+`needs_revision: false`). Normative and
+repository guidance for this work package is:
+
+- repository brief: `design-docs/briefs/gateway-sdk-2026-09-04.md`;
+- master behavior brief: `/Users/taco/gits/tacogips/riela/docs/briefs/gateway-sdk-2026-09-04.md`,
+  especially sections 2, 2.6, and 3.4;
+- agent guidance: `AGENTS.md`, `.codex/skills/swift-coding-agent/SKILL.md`, and the Riela
+  workflow contract `/Users/taco/gits/tacogips/riela/.codex/skills/riela-impl-workflow/SKILL.md`; and
+- immutable runtime reference:
+  `/Users/taco/gits/tacogips/gateway-sdk-kit-worktrees/runtime` at commit
+  `4d4b56c686f6875defccb54f74e2276022eb524e`.
+
+There is no Cursor-specific CLI behavior to preserve or adapt. Raw query, explicit query,
+schema, search, and operation behavior stays behind `GmailGatewayCLI` and the shared
+`GmailGatewayGraphQLExecutor`; no editor-specific path may bypass catalog or service
+authorization.
+
+Phase 1d replaces the substring scanner with the committed `GatewaySDKKit` runtime. The
+following ownership rules are normative:
+
+- `GatewaySchemaCatalog.gmailFull` declares every Gmail query, mutation, argument,
+  input, payload, object, enum, scalar, summary, and destructive marker. Every root
+  field has exactly one resolver, and runtime construction fails if the catalog and
+  resolver registry differ in either direction.
+- Every operation has a non-empty summary. `deleteDraft`, `deleteThread`,
+  `deleteMessage`, `batchDeleteMessages`, `deleteLabel`, `trashThread`, and
+  `trashMessage` are marked destructive; reversible `untrash` operations are not.
+- `GatewaySchemaCatalog.gmail(mode:)` is the only binary-mode authorization catalog.
+  It is a subset of `gmailFull`, uses stable tier strings `reader`, `draft`, `sender`,
+  `threads`, and `message-box`, and validates without problems for every mode.
+- After phase 1d lands, `Sources/GmailGatewayCore/Schema/GmailGatewaySchema*.swift` is
+  the machine-readable schema source of truth. This document defines the required
+  behavior and authorization boundary; the existing service-produced `[String: Any]`
+  payloads define field spelling and nullability where older prose differs.
+- `GmailGatewayGraphQLScanning.swift`, `GmailGatewayGraphQLArguments.swift`, and
+  `GmailGatewayGraphQLSelection.swift` are removed, together with scanner-only dispatch,
+  root-field arrays, and rejection helpers. No compatibility parser or scanner adapter is
+  retained.
+- The full catalog validates syntax and types before authorization. A valid full-catalog
+  operation missing from the mode catalog returns `CAPABILITY_DENIED`, not
+  `UNKNOWN_FIELD`, and no resolver or provider request runs.
+
+The authorized operation sets are exact, not cumulative across unrelated capabilities:
+
+| Mode / tier | Queries | Mutations |
+|-------------|---------|-----------|
+| `reader` | `accounts`, `account`, `threads`, `thread`, `message`, `messageFileSet`, `attachment`, `labels`, `profile` | None |
+| `draft` | Reader queries plus `drafts`, `draft` | `createDraft`, `createReplyDraft`, `createForwardDraft`, `updateDraft`, `deleteDraft` |
+| `sender` | Reader queries plus `drafts`, `draft` | Draft mutations plus `sendMessage`, `replyMessage`, `forwardMessage`, `sendDraft` |
+| `threads` | Reader queries | `modifyThreadLabels`, `modifyMessageLabels`, `batchModifyMessageLabels`, `trashThread`, `untrashThread`, `trashMessage`, `untrashMessage`, `deleteThread`, `deleteMessage`, `batchDeleteMessages`, `createLabel`, `updateLabel`, `deleteLabel` |
+| `message-box` | Reader queries | `importMessage`, `insertMessage` |
+
+Catalog authorization never replaces credential authorization. Resolvers load config and
+credential inputs only from `GatewayResolverContext.environment`, compose the existing
+services, and preserve their `MailboxCapability` / `AccessMode` checks. Resolver adapters
+carry existing `GmailGatewayError` codes into `GatewayResolverError`; unexpected failures
+use the runtime's generic resolver error without exposing credentials or provider payloads.
+Thus, for example, the `threads` mode exposes permanent-delete fields, but the service
+still requires `full`, while reversible mailbox changes require `read_modify`; the
+`sender` and `message-box` modes cannot borrow those capabilities.
+
+`GmailGatewayGraphQLExecutor` is the single execution path for both
+`GmailGatewayCLI` and `GmailGatewaySDK`. Its data flow is:
+
+1. accept a document, a `[String: GatewayJSONValue]` variable object, a mode, and an
+   explicit environment; construct `GatewayGraphQLRuntime` with `gmailFull`, the mode
+   catalog, the complete resolver registry, and a generated request ID;
+2. preflight parse and validate only to estimate provider cost, then reject authorized
+   work above 1,000 estimated Gmail requests with a runtime-compatible envelope; a
+   request-scoped shared budget also consumes one permit immediately before every
+   Gmail HTTP attempt (including GET retries and attachment downloads), rejecting
+   attempt 1,001 before it dispatches;
+3. let the kit parse, validate, authorize, coerce input objects and variables, invoke
+   resolvers, and project aliases and nested selections; and
+4. return the kit `GatewayEnvelope`, preserving missing projected keys as `null` and
+   existing Gmail service error codes.
+
+Queries may contain multiple root fields and use the kit's bounded concurrent execution;
+mutations contain exactly one root field. Fragments, directives, subscriptions, multiple
+operations, and introspection remain unsupported according to the shared runtime contract.
+Runtime syntax and validation failures exit `2`, capability and resolver failures exit
+`1`, and success exits `0`.
+
+The cost estimate includes one list request plus every possible selected per-item detail
+request for `threads` and `drafts`, using each validated materialized `first` value and
+the document-wide hydration plan applied by the resolver context. It therefore charges
+every repeated alias for the aggregate detail selection before dispatch rather than
+allowing concurrent root resolution to multiply Gmail work. A cost-limit rejection
+returns `RESOURCE_LIMIT` with exit `2`, a generated request ID, and no provider request.
+The kit remains authoritative for syntax and validation envelopes after this conservative
+Gmail-specific guard.
+
+`GmailGatewaySDK(mode:)` conforms to `GatewaySDK`, publishes provider
+`gmail-gateway`, the stable mode tier, and the authorized catalog, and delegates
+`execute(document:variables:environment:)` directly to the shared executor. Its overridden
+`invoke` builds every GraphQL operation from `gmailFull`, then delegates to that same
+executor so known denied operations return `CAPABILITY_DENIED`; builder failures use the
+same coded, request-ID-bearing canonical envelope as CLI operation failures. It supports
+`.default`, field-path, and raw selections without a CLI round trip.
+SDK execution is fail-closed: `GMAIL_GATEWAY_CONFIG` must be present in the supplied
+environment, must be absolute, and must not use `~`; no config, credential, data, or
+cache default is read from the process home directory. Under this strict SDK policy,
+nested storage and credential paths may remain relative to the containing config file,
+but neither those values nor their per-credential environment overrides may use home
+expansion. Validation covers `cache_dir`, `attachment_dir`, every
+`allowed_send_attachment_roots` entry, `oauth_client_secret_path`, and
+`token_store_path`, and fails before authentication or provider access. The CLI
+explicitly selects its legacy default-path policy at its own boundary, retaining
+command-line compatibility without granting the SDK ambient credential discovery.
+
+The synchronous `GmailGatewayCLI.run(arguments:environment:)` API remains stable. Its
+async bridge must run the executor task on an independent execution context before
+waiting; it must not block an actor or serial executor that the task needs to complete.
+`GmailGatewaySDK.execute` is cancellation-aware, and cancellation policy is classified
+from operation intent rather than HTTP method. OAuth refresh is a cancellable control-plane
+prerequisite even though it uses `POST`; cancelling it returns `CANCELLED` and prevents
+the later Gmail request. Cancelling a safe read, retry wait, or mutation prerequisite
+read cancels its live `URLSessionDataTask`, returns `CANCELLED`, prevents retries, and
+prevents every later provider attempt, including the irreversible mutation request. Once
+the Gmail mutation request itself is dispatched, cancellation must not replace a
+definitive provider result: a received success preserves the operation payload, and a
+received provider failure preserves that failure. If no definitive Gmail response is
+available after mutation dispatch, whether or not the caller cancelled, the runtime returns
+the non-retryable `MUTATION_OUTCOME_UNKNOWN` GraphQL error rather than a retryable transport
+failure or a claimed cancellation. The synchronous HTTP bridge applies an absolute
+30-second response deadline in addition to URLSession's inactivity timeout, cancels the
+transport on expiry, and classifies the dispatched mutation as `MUTATION_OUTCOME_UNKNOWN`.
+Callers must not automatically retry that outcome.
+Before calling the executor, the CLI creates an effective copy of its supplied
+environment and, when `--config` is present, sets `GMAIL_GATEWAY_CONFIG` in that copy to
+the flag value. This preserves the existing `--config`-over-environment precedence
+without adding a second executor configuration channel. `GmailGatewaySDK` does not read
+process-global state and observes only the environment passed to `execute` or `invoke`.
+
+The `graphql` command surface is the same in every binary and is catalog-driven:
+
+- `graphql --query|--query-file` remains raw GraphQL passthrough;
+- `graphql query --query|--query-file` is the explicit equivalent;
+- both query forms accept `--variables|--variables-file` and `--pretty`;
+- `graphql schema` prints the authorized catalog as SDL without loading credentials or
+  contacting Gmail;
+- `graphql search <regex> [--kinds ...] [--include-referenced-types] [--limit N]`
+  searches only the authorized catalog using `GatewaySchemaSearch` and its bounded regex
+  policy, without loading credentials or contacting Gmail; and
+- `graphql operation <name> [--variables|--variables-file] [--select a.b,c]` builds a
+  document from `gmailFull`; the shared executor then authorizes it against the mode
+  catalog, so a known disallowed operation returns `CAPABILITY_DENIED` rather than
+  `UNKNOWN_OPERATION`.
+
+Each form has exact positional cardinality and a per-subcommand flag allowlist. Unknown
+or inapplicable flags, duplicate singleton flags, and trailing positional arguments fail
+with CLI usage error before variable-file loading, document construction, resolver
+dispatch, or provider access. This applies equally to destructive operations.
+Malformed regexes and patterns rejected by the shared bounded-regex policy map to a
+single `INVALID_PATTERN` request error with exit `2`; they never become
+`UNEXPECTED_ERROR`, load configuration, or contact Gmail.
+
+All mutations accept exactly one non-null `input` object. `threads` accepts only
+`input: ThreadSearchInput!`; the previously tolerated flat
+`threads(accountId:first:...)` form is intentionally removed. Unknown, missing, or
+mistyped arguments and variables fail validation rather than being recovered through
+literal scanning.
 
 ### Canonical Root Types
 
@@ -223,6 +396,18 @@ type Mutation {
   sendDraft(input: SendDraftInput!): SendMessagePayload!
 }
 
+input SendMessageInput {
+  accountId: ID!
+  to: [String!]
+  cc: [String!]
+  bcc: [String!]
+  replyTo: String
+  subject: String
+  textBody: String
+  htmlBody: String
+  attachmentPaths: [String!]
+}
+
 input SendDraftInput {
   accountId: ID!
   draftId: ID!
@@ -270,6 +455,23 @@ input ForwardMessageInput {
   includeAttachments: Boolean = true
   attachmentPaths: [String!]
 }
+
+type SendMessagePayload {
+  operation: String!
+  accountId: ID!
+  provider: MailProvider!
+  draftId: ID
+  messageId: ID
+  threadId: ID
+  status: String!
+  rejectedAttachments: [RejectedAttachment!]!
+}
+
+type RejectedAttachment {
+  path: String!
+  code: String!
+  reason: String!
+}
 ```
 
 `replyMessage` and `forwardMessage` are sender-only mutations that send directly.
@@ -297,11 +499,22 @@ type MailDraft {
   accountId: ID!
   message: MailMessage
 }
+
+type MailDraftEdge {
+  cursor: String!
+  node: MailDraft!
+}
+
+type MailDraftConnection {
+  edges: [MailDraftEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
 ```
 
 `draft` is what supplies the provider attachment ids that `updateDraft`
-`keepAttachmentIds` refers to. `gmail-gateway-reader` rejects both draft queries
-with `SEND_DISABLED_IN_READER` because the reader schema has no draft surface.
+`keepAttachmentIds` refers to. `gmail-gateway-reader` denies both draft queries with
+`CAPABILITY_DENIED` because the reader's authorized catalog has no draft surface.
 
 ### Search Input Model
 
@@ -355,6 +568,7 @@ enum MailProvider {
 }
 
 type MailAddress {
+  address: String!
   raw: String!
 }
 
@@ -362,6 +576,7 @@ type MailAccount {
   id: ID!
   provider: MailProvider!
   emailAddress: String!
+  isFallback: Boolean!
   capabilities: MailCapabilities!
 }
 
@@ -370,6 +585,7 @@ type MailCapabilities {
   canSend: Boolean!
   configuredAccessMode: AccessMode!
   authState: AuthState!
+  isFallback: Boolean!
 }
 
 type MailThread {
@@ -379,6 +595,7 @@ type MailThread {
   snippet: String
   messages: [MailMessage!]!
   labels: [String!]!
+  providerMetadata: ProviderMetadata
 }
 
 type MailMessage {
@@ -393,17 +610,25 @@ type MailMessage {
   replyTo: [MailAddress!]!
   sentAt: DateTime
   receivedAt: DateTime
+  snippet: String
+  textBody: String
+  htmlBody: String
   attachments: [MailAttachment!]!
+  labels: [String!]!
+  historyId: String
   providerMetadata: ProviderMetadata
 }
 
 type MailAttachment {
   id: ID!
+  accountId: ID
+  messageId: ID
   filename: String
   mimeType: String!
   sizeBytes: Int
   downloadKey: String
   materializationState: AttachmentMaterializationState!
+  providerMetadata: ProviderMetadata
 }
 
 type MailMessageFileSet {
@@ -451,7 +676,12 @@ type ProviderMetadata {
 }
 
 type GmailProviderMetadata {
-  labelIds: [String!]!
+  accountId: ID
+  messageId: ID
+  threadId: ID
+  attachmentId: ID
+  partId: ID
+  labelIds: [String!]
   historyId: String
 }
 
@@ -464,6 +694,8 @@ enum AttachmentMaterializationState {
 enum AccessMode {
   READ
   READ_SEND
+  READ_MODIFY
+  FULL
 }
 
 enum AuthState {
@@ -480,11 +712,31 @@ enum AuthState {
 timestamp precision. If only an RFC 5322 mail header date is available, the
 gateway normalizes it to the same timestamp format before returning it.
 
-`MailAddress.raw` preserves the provider/header address string. Parsed display
-names and mailbox fields can be added later without changing the raw fallback.
+`MailAddress.raw` preserves the provider/header address string. The runtime-facing
+resolver normalization also publishes that same value as `address`, satisfying the
+canonical SDK projection `messages { from { address } }` without modifying provider or
+service models. Both fields are therefore stable aliases in phase 1d; parsed display-name
+and mailbox components remain future additive fields.
+
+Resolver normalization is deliberately narrow and occurs before conversion to
+`GatewayJSONValue`: recursively add `address` beside each service-produced
+`MailAddress.raw`, and remove `localPath` from every `MailAttachment`. All other keys and
+null values pass through unchanged. This is the only intentional difference from the
+service dictionaries, and it preserves the existing rule that GraphQL never exposes
+local filesystem paths. The executor derives an aggregate hydration plan from the parsed
+GatewaySDKKit selection AST before resolver dispatch: summary-only `threads` and `drafts`
+selections make only the list request, `edges` and summary thread-node selections avoid
+detail reads, and selected thread message/subject/label fields or
+`providerMetadata.gmail.labelIds` (plus draft nodes) trigger the needed detail hydration.
+When a detail read is required, list-derived thread `snippet` and provider `historyId` values
+remain authoritative so selecting a detail sibling does not change already selected summary
+fields. The runtime then removes fields the caller did not select. `textBody` and
+`htmlBody` remain present only as nullable compatibility fields whose resolver values are
+always `null`; message content remains available solely through file download keys.
 
 `MailProvider`, `AccessMode`, and `AuthState` are GraphQL enums. Configuration
-uses lower-case provider/access values such as `gmail`, `read`, and `read_send`;
+uses lower-case provider/access values such as `gmail`, `read`, `read_send`,
+`read_modify`, and `full`;
 GraphQL responses use the upper-case enum values shown above.
 
 ### Query Semantics
@@ -508,12 +760,12 @@ Phase 1 does not expose mutations. Phase 2 splits the outbound surface strictly 
 
 - `gmail-gateway-draft` owns the draft lifecycle (`createDraft`, `createReplyDraft`,
   `createForwardDraft`, `updateDraft`, `deleteDraft`) and has no send path; `sendMessage`,
-  `replyMessage`, `forwardMessage`, and `sendDraft` are rejected with
-  `SEND_DISABLED_IN_DRAFT_GATEWAY` before any provider call
+  `replyMessage`, `forwardMessage`, and `sendDraft` are denied with
+  `CAPABILITY_DENIED` before any provider call
 - `gmail-gateway-sender` treats `sendMessage` as direct provider send, sends replies and
   forwards directly, sends prepared drafts through `sendDraft`, and also supports the full
   draft lifecycle
-- `gmail-gateway-reader` rejects write mutations with `SEND_DISABLED_IN_READER`
+- `gmail-gateway-reader` denies write mutations with `CAPABILITY_DENIED`
 
 `updateDraft` maps to the provider draft-replacement call (Gmail `drafts.update`), so the
 gateway rebuilds the whole draft from the merged state rather than patching it in place:
@@ -547,6 +799,11 @@ The shared input fields are:
 - body variants (`textBody`, `htmlBody`)
 - attachments by validated local file path
 
+`SendMessageInput.to`, `cc`, and `bcc` are individually optional because the service
+accepts any recipient combination, but their combined values must contain at least one
+recipient. The existing service performs that semantic validation after GraphQL type
+coercion and before any provider request.
+
 Reply and forward workflows are provided by the dedicated `replyMessage` and
 `forwardMessage` mutations described above rather than by `SendMessageInput`.
 
@@ -565,30 +822,99 @@ Reply and forward workflows are provided by the dedicated `replyMessage` and
 ### Mailbox Mutation Semantics
 
 `gmail-gateway-threads` owns every operation that changes stored mail. It never composes,
-sends, or ingests, and the other binaries reject its mutations with
-`MAILBOX_MUTATION_NOT_SUPPORTED`.
+sends, or ingests, and the other modes deny its mutations with `CAPABILITY_DENIED`.
+
+The `MailboxMutation` name below groups this mode's fields for readability; the catalog
+merges them into the single GraphQL `Mutation` root.
 
 ```graphql
 type MailboxMutation {
-  modifyThreadLabels(accountId: ID!, threadId: ID!, addLabelIds: [String!], removeLabelIds: [String!]): MailboxMutationPayload!
-  modifyMessageLabels(accountId: ID!, messageId: ID!, addLabelIds: [String!], removeLabelIds: [String!]): MailboxMutationPayload!
-  batchModifyMessageLabels(accountId: ID!, messageIds: [ID!]!, addLabelIds: [String!], removeLabelIds: [String!]): MailboxMutationPayload!
-  trashThread(accountId: ID!, threadId: ID!): MailboxMutationPayload!
-  untrashThread(accountId: ID!, threadId: ID!): MailboxMutationPayload!
-  trashMessage(accountId: ID!, messageId: ID!): MailboxMutationPayload!
-  untrashMessage(accountId: ID!, messageId: ID!): MailboxMutationPayload!
-  deleteThread(accountId: ID!, threadId: ID!): MailboxMutationPayload!
-  deleteMessage(accountId: ID!, messageId: ID!): MailboxMutationPayload!
-  batchDeleteMessages(accountId: ID!, messageIds: [ID!]!): MailboxMutationPayload!
-  createLabel(accountId: ID!, name: String!, messageListVisibility: String, labelListVisibility: String): MailboxMutationPayload!
-  updateLabel(accountId: ID!, labelId: ID!, name: String, messageListVisibility: String, labelListVisibility: String): MailboxMutationPayload!
-  deleteLabel(accountId: ID!, labelId: ID!): MailboxMutationPayload!
+  modifyThreadLabels(input: ModifyThreadLabelsInput!): MailboxMutationPayload!
+  modifyMessageLabels(input: ModifyMessageLabelsInput!): MailboxMutationPayload!
+  batchModifyMessageLabels(input: BatchModifyMessageLabelsInput!): MailboxMutationPayload!
+  trashThread(input: ThreadMailboxActionInput!): MailboxMutationPayload!
+  untrashThread(input: ThreadMailboxActionInput!): MailboxMutationPayload!
+  trashMessage(input: MessageMailboxActionInput!): MailboxMutationPayload!
+  untrashMessage(input: MessageMailboxActionInput!): MailboxMutationPayload!
+  deleteThread(input: ThreadMailboxActionInput!): MailboxMutationPayload!
+  deleteMessage(input: MessageMailboxActionInput!): MailboxMutationPayload!
+  batchDeleteMessages(input: BatchDeleteMessagesInput!): MailboxMutationPayload!
+  createLabel(input: CreateLabelInput!): MailboxMutationPayload!
+  updateLabel(input: UpdateLabelInput!): MailboxMutationPayload!
+  deleteLabel(input: DeleteLabelInput!): MailboxMutationPayload!
+}
+
+input ModifyThreadLabelsInput {
+  accountId: ID!
+  threadId: ID!
+  addLabelIds: [String!]
+  removeLabelIds: [String!]
+}
+
+input ModifyMessageLabelsInput {
+  accountId: ID!
+  messageId: ID!
+  addLabelIds: [String!]
+  removeLabelIds: [String!]
+}
+
+input BatchModifyMessageLabelsInput {
+  accountId: ID!
+  messageIds: [ID!]!
+  addLabelIds: [String!]
+  removeLabelIds: [String!]
+}
+
+input ThreadMailboxActionInput {
+  accountId: ID!
+  threadId: ID!
+}
+
+input MessageMailboxActionInput {
+  accountId: ID!
+  messageId: ID!
+}
+
+input BatchDeleteMessagesInput {
+  accountId: ID!
+  messageIds: [ID!]!
+}
+
+input CreateLabelInput {
+  accountId: ID!
+  name: String!
+  messageListVisibility: MessageListVisibility
+  labelListVisibility: LabelListVisibility
+}
+
+input UpdateLabelInput {
+  accountId: ID!
+  labelId: ID!
+  name: String
+  messageListVisibility: MessageListVisibility
+  labelListVisibility: LabelListVisibility
+}
+
+input DeleteLabelInput {
+  accountId: ID!
+  labelId: ID!
+}
+
+enum MessageListVisibility {
+  show
+  hide
+}
+
+enum LabelListVisibility {
+  labelShow
+  labelShowIfUnread
+  labelHide
 }
 
 type MailboxMutationPayload {
   operation: String!
   accountId: ID!
-  provider: String!
+  provider: MailProvider!
   status: String!
   threadId: ID
   messageId: ID
@@ -614,7 +940,10 @@ type MailboxMutationPayload {
 ### Mail Ingestion Semantics
 
 `gmail-gateway-message-box` adds existing RFC 822 mail to the mailbox without sending it.
-The other binaries reject its mutations with `MAIL_INGEST_NOT_SUPPORTED`.
+The other modes deny its mutations with `CAPABILITY_DENIED`.
+
+The `IngestMutation` name below is likewise a readable group whose fields are emitted on
+the single GraphQL `Mutation` root.
 
 ```graphql
 type IngestMutation {
@@ -626,10 +955,15 @@ input MailboxIngestInput {
   accountId: ID!
   rfc822Path: String!            # must resolve under storage.allowed_send_attachment_roots
   labelIds: [String!]
-  internalDateSource: String     # RECEIVED_TIME or DATE_HEADER
+  internalDateSource: InternalDateSource
   neverMarkSpam: Boolean         # importMessage only
   processForCalendar: Boolean    # importMessage only
   deleted: Boolean
+}
+
+enum InternalDateSource {
+  RECEIVED_TIME
+  DATE_HEADER
 }
 ```
 
@@ -764,6 +1098,9 @@ permanent delete, and only because the provider accepts no narrower scope for it
 
 GraphQL errors should be structured with machine-readable extension codes:
 
+- `CAPABILITY_DENIED`
+- `CANCELLED`
+- `MUTATION_OUTCOME_UNKNOWN`
 - `ACCOUNT_NOT_FOUND`
 - `ATTACHMENT_NOT_FOUND`
 - `CREDENTIAL_NOT_FOUND`
@@ -774,8 +1111,6 @@ GraphQL errors should be structured with machine-readable extension codes:
 - `MESSAGE_NOT_FOUND`
 - `AUTH_BOOTSTRAP_NOT_IMPLEMENTED`
 - `SEND_NOT_SUPPORTED`
-- `SEND_DISABLED_IN_READER`
-- `SEND_DISABLED_IN_DRAFT_GATEWAY`
 - `DRAFT_NOT_FOUND`
 - `LABEL_NOT_FOUND`
 - `MAILBOX_MUTATION_NOT_SUPPORTED`
@@ -783,6 +1118,10 @@ GraphQL errors should be structured with machine-readable extension codes:
 - `ACCESS_MODE_INSUFFICIENT`
 - `CONFIG_INVALID`
 - `UNEXPECTED_ERROR`
+
+`SEND_DISABLED_IN_READER` and `SEND_DISABLED_IN_DRAFT_GATEWAY` remain defined for
+service-level compatibility, but a root absent from an authorized phase 1d catalog returns
+`CAPABILITY_DENIED` before resolver dispatch and must not report either retained code.
 
 ### Logging
 
@@ -801,7 +1140,7 @@ GraphQL errors should be structured with machine-readable extension codes:
   `gmail-gateway-threads`, and only through the three explicitly named delete mutations
 - the reader binary must not expose write resolvers
 - direct send resolvers (`sendMessage`, `replyMessage`, `forwardMessage`) must be reachable
-  only through `gmail-gateway-sender`; `gmail-gateway-draft` rejects them before any provider
+  only through `gmail-gateway-sender`; `gmail-gateway-draft` denies them before any provider
   call so the draft binary has no code path that can transmit mail
 - `gmail-gateway-sender` may also expose draft resolvers, but draft resolvers must not send mail
 - file paths returned by gateway download commands must always be normalized
@@ -827,6 +1166,101 @@ Adding a new provider should usually require:
 2. config validation rules for that provider
 3. provider-specific auth bootstrap
 4. schema additions only when the canonical model is insufficient
+
+## Phase 1d Dependency, Validation, and Rollout
+
+`Package.swift` consumes product `GatewaySDKKit` through
+`.package(path: "../../gateway-sdk-kit")`; an adjacent comment records that the operator
+will replace the local path with a URL revision pin later. The package is immutable from
+this work item: phase 1d must neither edit it nor copy its parser/runtime into
+gmail-gateway.
+
+The consumed sibling path and the supplied reference worktree are separate roles. The
+reference at `/Users/taco/gits/tacogips/gateway-sdk-kit-worktrees/runtime` documents the
+required committed API. Before implementation or verification, the consumed sibling must
+resolve to a commit containing `GatewayGraphQLRuntime` and the catalog, SDK, search,
+envelope, resolver, and JSON-value APIs. As verified on 2026-09-05, both the consumed
+sibling and reference worktree resolve to commit
+`4d4b56c686f6875defccb54f74e2276022eb524e`. If that precondition later fails,
+implementation stops with the mismatch recorded; it must not alter GatewaySDKKit, bind an
+older API, change the authorized dependency path, or restore a private parser.
+
+Rollout is a single phase 1d feature on `feat/gateway-sdk`. It includes catalog,
+resolvers, executor, SDK, CLI, tests, smoke coverage, and documentation together; no
+compatibility interval keeps the scanner alive. Tests must prove:
+
+- `gmailFull` and every mode catalog validate cleanly and operation-set parity holds in
+  both directions against an expected five-mode authorization oracle declared in test
+  data, not derived from the production catalog, resolver registry, mode root arrays, or
+  another production authorization helper;
+- the cross-product of every full-catalog root field and all five modes matches that
+  independent oracle: every authorized literal and variable form reaches only its exact
+  ordered provider effect sequence, and every denied form returns `CAPABILITY_DENIED`
+  naming the mode without resolver or network dispatch; credential-mode tests separately
+  prove the service-owned `AccessMode` boundary rather than reusing catalog authorization
+  as their expected result;
+- successful draft, sender, mailbox, and ingest cases compare the complete decoded
+  GraphQL envelope by canonical equality, including the `data`, `errors`, and extension
+  key shape; generated request IDs are validated separately. The selected root payload
+  also uses exact key-set equality so unexpected fields fail the test. Every request in
+  the exact provider sequence compares its complete body by canonical equality, treating
+  a bodyless request as exactly absent.
+  Draft and sender assertions decode every `raw` value and compare the complete
+  operation-specific RFC 822/MIME message, including recipients, subject, bodies,
+  threading headers, attachments, and provider wrapper keys, rather than testing
+  substrings or a subset of JSON keys;
+- variables cover strings, integers, lists, nested input objects, file loading, mutual
+  exclusion, missing values, type errors, unused/undeclared/unknown variables, and
+  non-object JSON;
+- projection covers aliases, nested lists and objects, missing keys becoming `null`, and
+  exact rejection of undeclared response fields;
+- provider-mapping coverage proves that `labels` filters entries without a non-blank
+  provider ID while preserving `accountId`, `name`, `type`, `messageListVisibility`, and
+  `labelListVisibility`, and that `profile` preserves `emailAddress`, `messagesTotal`,
+  `threadsTotal`, and `historyId`;
+- SDK default selection executes for `threads`, `labels`, and `createDraft`, and strict
+  SDK configuration tests reject a missing, relative, or home-expanded
+  `GMAIL_GATEWAY_CONFIG` plus home-expanded nested storage/credential paths without
+  provider access; a conflicting CLI `--config` and environment value proves flag
+  precedence;
+- raw passthrough, explicit `query`, schema, search, and operation CLI forms work in all
+  five modes with independent provider-effect assertions. Every validator class asserts
+  its exact stable code and exit class; malformed regexes assert `INVALID_PATTERN`, and
+  every form rejects extra positionals, unknown or inapplicable flags, and duplicate
+  singleton flags before effects;
+- cancellation tests distinguish OAuth refresh, safe reads and retries, mutation
+  prerequisite reads, definitive post-dispatch mutation responses, and cancelled and
+  uncancelled lost or deadline-expired post-dispatch mutation responses. They prove
+  cancellation before the irreversible request prevents it, definitive mutation results are
+  not masked, and only an indeterminate dispatched mutation returns
+  `MUTATION_OUTCOME_UNKNOWN`; and
+- URLProtocol request assertions, smoke tests, full build/test, SwiftLint, file-size, and
+  diff checks pass before the authorized local commit.
+
+`TASK-006` must remain `In Progress` whenever any every-mode, per-CLI-form effect,
+validator-code, independent-authorization-oracle, exact-envelope, exact-provider-body,
+mapping, configuration, or cancellation evidence above is absent or stale. It may be
+marked `Completed` only after all such evidence is present and the current focused and
+full gates pass. A broad test command or partial status/body assertion is not sufficient.
+
+The smoke suite has already been split by responsibility: `main.swift` is 409 lines and
+`GraphQLRuntimeSmokeTests.swift` is 632 lines. Every non-generated Swift file remains
+below 1,000 lines. The final gates are:
+
+```bash
+arch -arm64 /bin/zsh -lc 'cd /Users/taco/gits/tacogips/gmail-gateway-worktrees/gateway-sdk && swift build && swift test && swift run gmail-gateway-swift-smoke-tests && swiftlint'
+git diff --check
+find Sources Tests -name '*.swift' -not -path '*/.build/*' -print0 | xargs -0 wc -l | awk '$1 > 1000 && $2 != "total" { print; failed=1 } END { exit failed }'
+git status --porcelain=v1
+```
+
+The final status command must be empty after the authorized local commit.
+
+The only review-required changes outside the original brief are the strict SDK-only
+configuration-path policy and operation-aware cancellation at the shared HTTP boundary.
+They do not change OAuth scopes, token persistence or refresh payloads, CLI default-path
+behavior, Gmail request shapes, service semantics, MIME construction, persistent auth,
+or packaging. No push is authorized.
 
 ## Phased Delivery
 

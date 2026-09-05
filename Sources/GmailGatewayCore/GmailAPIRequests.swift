@@ -74,8 +74,26 @@ func postGmailJSONObject(
         accessToken: accessToken,
         body: body,
         context: context,
+        queryItems: queryItems,
+        effect: .gmailMutation
+    )
+}
+
+/// POSTs without a request entity when Gmail requires an empty mutation body.
+func postGmailBodylessJSONObject(
+    path: String,
+    accessToken: String,
+    context: String,
+    queryItems: [URLQueryItem] = []
+) throws -> [String: Any] {
+    var request = try gmailJSONRequest(
+        method: "POST",
+        path: path,
+        accessToken: accessToken,
         queryItems: queryItems
     )
+    request.setValue(nil, forHTTPHeaderField: "Content-Type")
+    return try gmailMutationJSONObject(request, context: context)
 }
 
 func putGmailJSONObject(
@@ -84,7 +102,14 @@ func putGmailJSONObject(
     body: [String: Any],
     context: String
 ) throws -> [String: Any] {
-    try gmailJSONObject(method: "PUT", path: path, accessToken: accessToken, body: body, context: context)
+    try gmailJSONObject(
+        method: "PUT",
+        path: path,
+        accessToken: accessToken,
+        body: body,
+        context: context,
+        effect: .gmailMutation
+    )
 }
 
 func patchGmailJSONObject(
@@ -93,7 +118,14 @@ func patchGmailJSONObject(
     body: [String: Any],
     context: String
 ) throws -> [String: Any] {
-    try gmailJSONObject(method: "PATCH", path: path, accessToken: accessToken, body: body, context: context)
+    try gmailJSONObject(
+        method: "PATCH",
+        path: path,
+        accessToken: accessToken,
+        body: body,
+        context: context,
+        effect: .gmailMutation
+    )
 }
 
 /// POSTs a JSON body to an endpoint that answers with an empty body (Gmail batch mutations).
@@ -105,7 +137,7 @@ func postGmailJSONNoContent(
 ) throws {
     var request = try gmailJSONRequest(method: "POST", path: path, accessToken: accessToken)
     request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
-    _ = try performGmailHTTPRequest(request, context: context)
+    _ = try performGmailHTTPRequest(request, context: context, effect: .gmailMutation)
 }
 
 func deleteGmailResource(
@@ -115,7 +147,7 @@ func deleteGmailResource(
 ) throws {
     var request = try gmailJSONRequest(method: "DELETE", path: path, accessToken: accessToken)
     request.setValue(nil, forHTTPHeaderField: "Content-Type")
-    _ = try performGmailHTTPRequest(request, context: context)
+    _ = try performGmailHTTPRequest(request, context: context, effect: .gmailMutation)
 }
 
 private func gmailJSONObject(
@@ -124,7 +156,8 @@ private func gmailJSONObject(
     accessToken: String,
     body: [String: Any],
     context: String,
-    queryItems: [URLQueryItem] = []
+    queryItems: [URLQueryItem] = [],
+    effect: GmailHTTPRequestEffect
 ) throws -> [String: Any] {
     var request = try gmailJSONRequest(
         method: method,
@@ -133,15 +166,19 @@ private func gmailJSONObject(
         queryItems: queryItems
     )
     request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
-    let response = try performGmailHTTPRequest(request, context: context)
-    guard let object = try JSONSerialization.jsonObject(with: response.data) as? [String: Any] else {
-        throw GmailGatewayError(
-            "Gmail API response was not a JSON object",
-            code: .providerApiError,
-            exitCode: .providerApiError
-        )
-    }
-    return object
+    return try gmailMutationJSONObject(request, context: context, effect: effect)
+}
+
+private func gmailMutationJSONObject(
+    _ request: URLRequest,
+    context: String,
+    effect: GmailHTTPRequestEffect = .gmailMutation
+) throws -> [String: Any] {
+    let response = try performGmailHTTPRequest(request, context: context, effect: effect)
+    // A received 2xx is definitive for a Gmail mutation. Gmail may acknowledge an
+    // irreversible write with an empty or truncated entity, so preserve success and
+    // let the owning result mapper use its stable fallback identifiers.
+    return (try? JSONSerialization.jsonObject(with: response.data) as? [String: Any]) ?? [:]
 }
 
 private func gmailJSONRequest(

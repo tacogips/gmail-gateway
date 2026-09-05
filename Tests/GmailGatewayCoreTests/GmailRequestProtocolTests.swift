@@ -134,54 +134,10 @@ struct GmailRequestProtocolTests {
         }
     }
 
-    @Test func graphQLThreadSearchSummaryNodeDoesNotFetchFullThreads() throws {
-        let paths = temporaryConfigPaths()
-        defer {
-            try? FileManager.default.removeItem(atPath: paths.root)
-        }
-        TestGmailRequestCaptureProtocol.reset()
-        TestGmailRequestCaptureProtocol.threadListResponseData = Data("""
-        {
-          "threads": [
-            {
-              "id": "thread-id",
-              "snippet": "thread snippet",
-              "historyId": "history-id"
-            }
-          ],
-          "resultSizeEstimate": 1
-        }
-        """.utf8)
-        URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
-        defer {
-            URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
-            TestGmailRequestCaptureProtocol.reset()
-        }
-
-        let result = try executeReaderGraphQL(
-            config: testConfig(paths: paths, tokenStoreJSON: readableTokenStoreJSON),
-            query: """
-            { threads(accountId: "personal") { edges { cursor node { id accountId snippet providerMetadata } } } }
-            """
-        )
-        let data = try #require(result.body["data"] as? [String: Any])
-        let threads = try #require(data["threads"] as? [String: Any])
-        let edges = try #require(threads["edges"] as? [[String: Any]])
-        let node = try #require(edges.first?["node"] as? [String: Any])
-
-        #expect(result.exitCode == .success)
-        #expect(node["id"] as? String == "thread-id")
-        #expect(node["snippet"] as? String == "thread snippet")
-        #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == ["/gmail/v1/users/me/threads"])
-    }
-
-    @Test func graphQLThreadSearchMessagesSelectionFetchesFullThreads() throws {
-        let paths = temporaryConfigPaths()
-        defer {
-            try? FileManager.default.removeItem(atPath: paths.root)
-        }
-        TestGmailRequestCaptureProtocol.reset()
-        TestGmailRequestCaptureProtocol.threadListResponseData = Data("""
+    @Test func catalogRuntimeThreadSearchProjectsSelectedFields() async throws {
+        let fixture = try GatewayRuntimeFixture()
+        defer { fixture.remove() }
+        let threadList = Data("""
         {
           "threads": [
             { "id": "thread-id", "snippet": "thread snippet" }
@@ -189,7 +145,7 @@ struct GmailRequestProtocolTests {
           "resultSizeEstimate": 1
         }
         """.utf8)
-        TestGmailRequestCaptureProtocol.threadGetResponseData = Data("""
+        let threadDetail = Data("""
         {
           "id": "thread-id",
           "messages": [
@@ -199,9 +155,216 @@ struct GmailRequestProtocolTests {
               "internalDate": "1782936000000",
               "payload": {
                 "headers": [
+                  { "name": "From", "value": "Display Name <person@example.com>" },
                   { "name": "Subject", "value": "Subject" }
                 ]
               }
+            }
+          ]
+        }
+        """.utf8)
+        func configureThreadResponses() {
+            TestGmailRequestCaptureProtocol.threadListResponseData = threadList
+            TestGmailRequestCaptureProtocol.threadGetResponseData = threadDetail
+        }
+        TestGmailRequestCaptureProtocol.reset()
+        configureThreadResponses()
+        URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
+        defer {
+            URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
+            TestGmailRequestCaptureProtocol.reset()
+        }
+
+        let summary = await GmailGatewayGraphQLExecutor().run(
+            query: "{ threads(input: { accountId: \"personal\" }) { totalCount } }",
+            mode: .reader,
+            environment: fixture.environment
+        )
+        #expect(summary.exitCode == 0)
+        let summaryData = try #require(summary.data?.anyValue as? [String: Any])
+        let summaryThreads = try #require(summaryData["threads"] as? [String: Any])
+        #expect(summaryThreads["totalCount"] as? Int == 1)
+        #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == [
+            "/gmail/v1/users/me/threads"
+        ])
+
+        TestGmailRequestCaptureProtocol.reset()
+        configureThreadResponses()
+
+        let result = await GmailGatewayGraphQLExecutor().run(
+            query: """
+            { threads(input: { accountId: "personal" }) { edges { node { id messages { id from { raw address } } } } } }
+            """,
+            mode: .reader,
+            environment: fixture.environment
+        )
+        #expect(result.exitCode == 0)
+        let data = try #require(result.data?.anyValue as? [String: Any])
+        let threads = try #require(data["threads"] as? [String: Any])
+        let edges = try #require(threads["edges"] as? [[String: Any]])
+        let node = try #require(edges.first?["node"] as? [String: Any])
+        let messages = try #require(node["messages"] as? [[String: Any]])
+        let from = try #require(messages.first?["from"] as? [[String: Any]])
+        let expectedFrom = try canonicalJSON([[
+            "raw": "Display Name <person@example.com>",
+            "address": "Display Name <person@example.com>"
+        ]])
+        #expect(try canonicalJSON(from) == expectedFrom)
+        #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == [
+            "/gmail/v1/users/me/threads",
+            "/gmail/v1/users/me/threads/thread-id"
+        ])
+    }
+
+    @Test func threadMetadataHydrationPreservesListedSummaryFields() async throws {
+        let fixture = try GatewayRuntimeFixture()
+        defer { fixture.remove() }
+        let threadList = Data("""
+        {
+          "threads": [
+            {
+              "id": "thread-id",
+              "snippet": "listed snippet",
+              "historyId": "listed-history"
+            }
+          ],
+          "resultSizeEstimate": 1
+        }
+        """.utf8)
+        let threadDetail = Data("""
+        {
+          "id": "thread-id",
+          "messages": [
+            {
+              "id": "message-id",
+              "threadId": "thread-id",
+              "snippet": "detail snippet",
+              "historyId": "detail-history",
+              "labelIds": ["INBOX", "Label_1"],
+              "payload": { "headers": [] }
+            }
+          ]
+        }
+        """.utf8)
+        let expectedRequests = [
+            "https://gmail.googleapis.com/gmail/v1/users/me/threads?maxResults=1&labelIds=INBOX",
+            "https://gmail.googleapis.com/gmail/v1/users/me/threads/thread-id?format=full"
+        ]
+        let expectedSummary: [String: Any] = [
+            "snippet": "listed snippet",
+            "providerMetadata": [
+                "gmail": [
+                    "labelIds": ["INBOX", "Label_1"],
+                    "historyId": "listed-history"
+                ]
+            ]
+        ]
+        func configureThreadResponses() {
+            TestGmailRequestCaptureProtocol.threadListResponseData = threadList
+            TestGmailRequestCaptureProtocol.threadGetResponseData = threadDetail
+        }
+        func node(from query: String) async throws -> [String: Any] {
+            let result = await GmailGatewayGraphQLExecutor().run(
+                query: query,
+                mode: .reader,
+                environment: fixture.environment
+            )
+            #expect(result.exitCode == 0)
+            let data = try #require(result.data?.anyValue as? [String: Any])
+            let threads = try #require(data["threads"] as? [String: Any])
+            let edges = try #require(threads["edges"] as? [[String: Any]])
+            return try #require(edges.first?["node"] as? [String: Any])
+        }
+
+        TestGmailRequestCaptureProtocol.reset()
+        configureThreadResponses()
+        URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
+        defer {
+            URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
+            TestGmailRequestCaptureProtocol.reset()
+        }
+
+        let metadataNode = try await node(from: """
+        { threads(input: { accountId: "personal", first: 1 }) {
+          edges { node { snippet providerMetadata { gmail { labelIds historyId } } } }
+        } }
+        """)
+        #expect(try canonicalJSON(metadataNode) == canonicalJSON(expectedSummary))
+        #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.absoluteString) == expectedRequests)
+        #expect(TestGmailRequestCaptureProtocol.capturedMethods == ["GET", "GET"])
+
+        TestGmailRequestCaptureProtocol.reset()
+        configureThreadResponses()
+
+        let detailNode = try await node(from: """
+        { threads(input: { accountId: "personal", first: 1 }) {
+          edges {
+            node {
+              snippet
+              providerMetadata { gmail { labelIds historyId } }
+              messages { id }
+            }
+          }
+        } }
+        """)
+        let detailSummary: [String: Any] = [
+            "snippet": try #require(detailNode["snippet"]),
+            "providerMetadata": try #require(detailNode["providerMetadata"])
+        ]
+        #expect(try canonicalJSON(detailSummary) == canonicalJSON(expectedSummary))
+        #expect((try #require(detailNode["messages"] as? [[String: Any]])).first?["id"] as? String == "message-id")
+        #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.absoluteString) == expectedRequests)
+        #expect(TestGmailRequestCaptureProtocol.capturedMethods == ["GET", "GET"])
+    }
+
+    @Test func catalogRuntimePreservesProviderErrorCodes() async throws {
+        let fixture = try GatewayRuntimeFixture()
+        defer { fixture.remove() }
+        TestGmailRequestCaptureProtocol.reset()
+        TestGmailRequestCaptureProtocol.responseStatusCode = 429
+        TestGmailRequestCaptureProtocol.responseData = Data(#"{"error":{"message":"rate limited"}}"#.utf8)
+        URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
+        defer {
+            URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
+            TestGmailRequestCaptureProtocol.reset()
+        }
+
+        let result = await GmailGatewayGraphQLExecutor().run(
+            query: "{ threads(input: { accountId: \"personal\" }) { totalCount } }",
+            mode: .reader,
+            environment: fixture.environment
+        )
+        #expect(result.exitCode == GmailGatewayExitCode.generalError.rawValue)
+        #expect(result.errors.first?.code == GmailGatewayErrorCode.providerRateLimited.rawValue)
+    }
+
+    @Test func catalogRuntimeProjectsCompleteProfileAndFiltersMalformedLabels() async throws {
+        let fixture = try GatewayRuntimeFixture()
+        defer { fixture.remove() }
+        TestGmailRequestCaptureProtocol.reset()
+        TestGmailRequestCaptureProtocol.profileResponseData = Data("""
+        {
+          "emailAddress": "profile@example.com",
+          "messagesTotal": 17,
+          "threadsTotal": 9,
+          "historyId": "history-17"
+        }
+        """.utf8)
+        TestGmailRequestCaptureProtocol.labelListResponseData = Data("""
+        {
+          "labels": [
+            {
+              "id": "Label_1",
+              "name": "Visible",
+              "type": "user",
+              "messageListVisibility": "show",
+              "labelListVisibility": "labelShow"
+            },
+            {
+              "name": "Malformed",
+              "type": "user",
+              "messageListVisibility": "hide",
+              "labelListVisibility": "labelHide"
             }
           ]
         }
@@ -212,24 +375,40 @@ struct GmailRequestProtocolTests {
             TestGmailRequestCaptureProtocol.reset()
         }
 
-        let result = try executeReaderGraphQL(
-            config: testConfig(paths: paths, tokenStoreJSON: readableTokenStoreJSON),
-            query: """
-            { threads(accountId: "personal") { edges { node { id messages { id } } } } }
-            """
+        let profile = await GmailGatewayGraphQLExecutor().run(
+            query: "{ profile(accountId: \"personal\") { accountId emailAddress messagesTotal threadsTotal historyId } }",
+            mode: .reader,
+            environment: fixture.environment
         )
-        let data = try #require(result.body["data"] as? [String: Any])
-        let threads = try #require(data["threads"] as? [String: Any])
-        let edges = try #require(threads["edges"] as? [[String: Any]])
-        let node = try #require(edges.first?["node"] as? [String: Any])
-        let messages = try #require(node["messages"] as? [[String: Any]])
+        #expect(profile.exitCode == 0)
+        #expect(profile.errors.isEmpty)
+        #expect(profile.data == .object(["profile": .object([
+            "accountId": .string("personal"),
+            "emailAddress": .string("profile@example.com"),
+            "messagesTotal": .int(17),
+            "threadsTotal": .int(9),
+            "historyId": .string("history-17")
+        ])]))
+        #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == ["/gmail/v1/users/me/profile"])
 
-        #expect(result.exitCode == .success)
-        #expect(messages.first?["id"] as? String == "message-id")
-        #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == [
-            "/gmail/v1/users/me/threads",
-            "/gmail/v1/users/me/threads/thread-id"
-        ])
+        TestGmailRequestCaptureProtocol.capturedURLs = []
+        TestGmailRequestCaptureProtocol.capturedMethods = []
+        let labels = await GmailGatewayGraphQLExecutor().run(
+            query: "{ labels(accountId: \"personal\") { id accountId name type messageListVisibility labelListVisibility } }",
+            mode: .reader,
+            environment: fixture.environment
+        )
+        #expect(labels.exitCode == 0)
+        #expect(labels.errors.isEmpty)
+        #expect(labels.data == .object(["labels": .array([.object([
+            "id": .string("Label_1"),
+            "accountId": .string("personal"),
+            "name": .string("Visible"),
+            "type": .string("user"),
+            "messageListVisibility": .string("show"),
+            "labelListVisibility": .string("labelShow")
+        ])])]))
+        #expect(TestGmailRequestCaptureProtocol.capturedURLs.map(\.path) == ["/gmail/v1/users/me/labels"])
     }
 
     @Test func directMessageReadDoesNotInlineBodies() throws {
@@ -461,7 +640,7 @@ struct GmailRequestProtocolTests {
         }
     }
 
-    @Test func graphQLCachedAttachmentDoesNotExposeLocalPathWhenRequested() throws {
+    @Test func cachedAttachmentRetainsDownloadMetadataForRuntimeNormalization() throws {
         let paths = temporaryConfigPaths()
         defer {
             try? FileManager.default.removeItem(atPath: paths.root)
@@ -476,19 +655,16 @@ struct GmailRequestProtocolTests {
         ))
         try "cached attachment".write(to: attachmentURL, atomically: true, encoding: .utf8)
 
-        let result = try executeReaderGraphQL(
-            config: testConfig(paths: paths),
-            query: """
-            { attachment(accountId: "personal", messageId: "message-id", attachmentId: "attachment-id") \
-            { id filename localPath downloadKey materializationState } }
-            """
+        let attachment = try #require(
+            GmailGatewayService(config: testConfig(paths: paths)).getAttachment(
+                accountId: "personal",
+                messageId: "message-id",
+                attachmentId: "attachment-id"
+            ) as? [String: Any]
         )
-        let data = try #require(result.body["data"] as? [String: Any])
-        let attachment = try #require(data["attachment"] as? [String: Any])
 
-        #expect(result.exitCode == .success)
         #expect(attachment["filename"] as? String == "report.pdf")
-        #expect(attachment["localPath"] == nil)
+        #expect(attachment["localPath"] is String)
         #expect(attachment["downloadKey"] is String)
     }
 
@@ -521,12 +697,7 @@ struct GmailRequestProtocolTests {
         #expect(error.exitCode == .generalError)
     }
 
-    @Test func providerRateLimitReturnsGraphQLErrorBody() throws {
-        let paths = temporaryConfigPaths()
-        defer {
-            try? FileManager.default.removeItem(atPath: paths.root)
-        }
-        let config = testConfig(paths: paths, tokenStoreJSON: readableTokenStoreJSON)
+    @Test func providerRateLimitUsesSpecificErrorTaxonomy() throws {
         TestGmailRequestCaptureProtocol.reset()
         TestGmailRequestCaptureProtocol.responseStatusCode = 429
         TestGmailRequestCaptureProtocol.responseData = Data(#"{"error":{"message":"rate limited"}}"#.utf8)
@@ -536,14 +707,13 @@ struct GmailRequestProtocolTests {
             TestGmailRequestCaptureProtocol.reset()
         }
 
-        let result = try executeReaderGraphQL(
-            config: config,
-            query: #"{ threads(input: { accountId: "personal" }) { totalCount } }"#
-        )
-
-        #expect(result.exitCode == .graphqlExecutionError)
-        #expect("\(result.body)".contains(GmailGatewayErrorCode.providerRateLimited.rawValue))
-        #expect("\(result.body)".contains(String(GmailGatewayExitCode.providerApiError.rawValue)))
+        try withReaderService(tokenStoreJSON: readableTokenStoreJSON) { service, _ in
+            let error = try requireGmailGatewayError {
+                _ = try service.searchThreads(accountId: "personal")
+            }
+            #expect(error.code == .providerRateLimited)
+            #expect(error.exitCode == .providerApiError)
+        }
     }
 
     @Test func providerErrorDetailsUseGoogleErrorFieldsWhenAvailable() throws {

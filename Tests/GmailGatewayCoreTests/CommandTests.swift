@@ -7,6 +7,7 @@ import Testing
     let result = GmailGatewayCLI().run(arguments: ["--help"], environment: [:])
     #expect(result.exitCode == GmailGatewayExitCode.success.rawValue)
     #expect(result.stdout.contains("gmail-gateway-reader"))
+    #expect(result.stdout.contains("--query <query>|--query-file <path>"))
 }
 
 @Test func draftHelpUsesDraftExecutableName() {
@@ -288,66 +289,81 @@ import Testing
     }
 }
 
-@Test func graphqlVariablesAreRejectedInsteadOfIgnored() throws {
+@Test func graphqlVariablesAreAccepted() throws {
+    let fixture = try GatewayRuntimeFixture()
+    defer { fixture.remove() }
     let result = GmailGatewayCLI().run(
         arguments: [
             "graphql",
-            "--query", "{ accounts { id } }",
-            "--variables", #"{"accountId":"personal"}"#
+            "--config", fixture.configPath,
+            "--query", "query Account($id: ID!) { account(id: $id) { id } }",
+            "--variables", #"{"id":"personal"}"#
         ],
-        environment: [:]
+        environment: fixture.environment
     )
 
-    #expect(result.exitCode == GmailGatewayExitCode.invalidCliUsage.rawValue)
-    #expect(result.stderr.contains("GraphQL variables are not supported yet"))
-    let output = try #require(JSONSerialization.jsonObject(with: Data(result.stderr.utf8)) as? [String: Any])
-    let error = try #require(output["error"] as? [String: Any])
-    let requestId = try #require(error["requestId"] as? String)
-    #expect(!requestId.isEmpty)
+    #expect(result.exitCode == GmailGatewayExitCode.success.rawValue)
+    #expect(result.stdout.contains("personal"))
 }
 
 @Test func threadSearchRejectsUnsupportedInputFilters() throws {
-    let result = try executeReaderGraphQL(
-        config: testConfig(paths: temporaryConfigPaths()),
-        query: #"{ threads(input: { accountId: "personal", unread: true }) { totalCount } }"#
+    let fixture = try GatewayRuntimeFixture()
+    defer { fixture.remove() }
+    let result = GmailGatewayCLI().run(
+        arguments: [
+            "graphql", "--config", fixture.configPath,
+            "--query", #"{ threads(input: { accountId: "personal", unread: true }) { totalCount } }"#
+        ],
+        environment: fixture.environment
     )
 
-    #expect(result.exitCode == .graphqlExecutionError)
-    #expect("\(result.body)".contains("Unsupported ThreadSearchInput field(s): unread"))
-    let errors = try #require(result.body["errors"] as? [[String: Any]])
-    let extensions = try #require(errors.first?["extensions"] as? [String: Any])
-    let requestId = try #require(extensions["requestId"] as? String)
-    #expect(!requestId.isEmpty)
+    #expect(result.exitCode == 2)
+    #expect(result.stdout.contains("unread"))
 }
 
 @Test func threadSearchRejectsInvalidFirstBeforeProviderCall() throws {
-    let result = try executeReaderGraphQL(
-        config: testConfig(paths: temporaryConfigPaths()),
-        query: #"{ threads(input: { accountId: "personal", first: 0 }) { totalCount } }"#
+    let fixture = try GatewayRuntimeFixture()
+    defer { fixture.remove() }
+    let result = GmailGatewayCLI().run(
+        arguments: [
+            "graphql", "--config", fixture.configPath,
+            "--query", #"{ threads(input: { accountId: "personal", first: 0 }) { totalCount } }"#
+        ],
+        environment: fixture.environment
     )
 
-    #expect(result.exitCode == .graphqlExecutionError)
-    #expect("\(result.body)".contains("ThreadSearchInput.first"))
+    #expect(result.exitCode == 1)
+    #expect(result.stdout.contains("ThreadSearchInput.first"))
 }
 
 @Test func readerAllowsWriteFieldNameAliasForReadRootField() throws {
-    let result = try executeReaderGraphQL(
-        config: testConfig(paths: temporaryConfigPaths()),
-        query: #"{ sendMessage: account(id: "personal") { id } }"#
+    let fixture = try GatewayRuntimeFixture()
+    defer { fixture.remove() }
+    let result = GmailGatewayCLI().run(
+        arguments: [
+            "graphql", "--config", fixture.configPath,
+            "--query", #"{ sendMessage: account(id: "personal") { id } }"#
+        ],
+        environment: fixture.environment
     )
 
-    #expect(result.exitCode == .success)
-    #expect(!"\(result.body)".contains("SEND_DISABLED_IN_READER"))
+    #expect(result.exitCode == 0)
+    #expect(!result.stdout.contains("CAPABILITY_DENIED"))
 }
 
 @Test func readerRejectsAliasedWriteRootField() throws {
-    let result = try executeReaderGraphQL(
-        config: testConfig(paths: temporaryConfigPaths()),
-        query: #"{ x: sendMessage(input: { accountId: "personal", to: ["a@example.com"], subject: "Hi", textBody: "Body" }) { messageId } }"#
+    let fixture = try GatewayRuntimeFixture()
+    defer { fixture.remove() }
+    let result = GmailGatewayCLI().run(
+        arguments: [
+            "graphql", "--config", fixture.configPath,
+            "--query", #"mutation { x: sendMessage(input: { accountId: "personal", to: ["a@example.com"], subject: "Hi", textBody: "Body" }) { messageId } }"#
+        ],
+        environment: fixture.environment
     )
 
-    #expect(result.exitCode == .graphqlExecutionError)
-    #expect("\(result.body)".contains("SEND_DISABLED_IN_READER"))
+    #expect(result.exitCode == 1)
+    #expect(result.stdout.contains("CAPABILITY_DENIED"))
 }
 
 @Test func outboundMailRejectsHeaderLineBreaksBeforeProviderCall() throws {
