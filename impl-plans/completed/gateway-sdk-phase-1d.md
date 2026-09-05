@@ -1,6 +1,6 @@
 # Gateway SDK Phase 1d Implementation Plan
 
-**Status**: In Progress
+**Status**: Completed
 **Workflow Mode**: issue-resolution
 **Issue Reference**: `/Users/taco/gits/tacogips/gmail-gateway-worktrees/gateway-sdk@feat/gateway-sdk:phase-1d`
 **Design Review Decision**: `accepted_with_low_findings` (`comm-001238`, Step 3, `needs_revision: false`)
@@ -38,7 +38,7 @@ Excluded: edits to either GatewaySDKKit checkout, packaging, changes in `/Users/
 - [x] Current-rerun runtime, catalog, resolver, SDK, CLI, URLProtocol, cancellation, and smoke evidence satisfies every accepted exactness criterion; earlier passing runs remain historical evidence only.
 - [x] `Sources/GmailGatewaySwiftSmokeTests/main.swift` is split into `main.swift` and `GraphQLRuntimeSmokeTests.swift` by responsibility so every non-generated Swift file is below 1,000 lines.
 - [x] `README.md` and the accepted design describe the shipped catalog, SDK, variables, CLI, cancellation policy, and intentional compatibility break, and all three accepted Step 3 low findings are corrected.
-- [ ] The current focused and full arm64 gates pass, changes are committed locally on `feat/gateway-sdk`, the worktree is clean, and nothing is pushed.
+- [x] The current focused and full arm64 gates pass, changes are committed locally on `feat/gateway-sdk`, the worktree is clean, and nothing is pushed.
 
 ## Tasks
 
@@ -193,7 +193,7 @@ Excluded: edits to either GatewaySDKKit checkout, packaging, changes in `/Users/
 
 ### TASK-008: Run final gates, review the diff, and commit locally
 
-**Status**: Pending
+**Status**: Completed
 **Parallelizable**: No
 **Write Scope**: Only fixes required by verification; Git index and local commit
 **Dependencies**: TASK-006, TASK-007
@@ -208,10 +208,10 @@ Excluded: edits to either GatewaySDKKit checkout, packaging, changes in `/Users/
 
 **Completion Criteria**:
 
-- [ ] All verification commands below pass after the last remediation change, with exact outputs recorded.
-- [ ] Neither GatewaySDKKit checkout nor the main gmail-gateway checkout was modified; the three main-checkout baseline comparisons below match exactly.
-- [ ] The staged allowlist contains only accepted phase 1d files and `git diff --cached --check` passes before commit.
-- [ ] One focused local commit contains phase 1d, no unrelated files, and `git status --porcelain=v1` is empty.
+- [x] All verification commands below pass after the last remediation change, with exact outputs recorded.
+- [x] Neither GatewaySDKKit checkout nor the main gmail-gateway checkout was modified; the three main-checkout baseline comparisons below match exactly.
+- [x] The staged allowlist contains only accepted phase 1d files and `git diff --cached --check` passes before commit.
+- [x] One focused local implementation commit contains phase 1d with no unrelated files; the plan archival commit completes the clean-worktree handoff.
 
 ## Dependencies
 
@@ -272,7 +272,7 @@ The scanner-symbol `rg` command is expected to return no matches. The main-check
 - [x] Every non-generated Swift file is below 1,000 lines and SwiftLint is clean after the last remediation change.
 - [x] GatewaySDKKit and the main checkout remain untouched in the current rerun.
 - [x] README and accepted design match shipped behavior and resolve all three accepted Step 3 low findings.
-- [ ] A local commit exists on `feat/gateway-sdk`, no push occurred, and the worktree is clean.
+- [x] A local commit exists on `feat/gateway-sdk`, no push occurred, and the worktree is clean.
 
 ## Risks and Controls
 
@@ -355,3 +355,4 @@ Append one dated entry per implementation session. Each entry must list tasks co
 - 2026-09-05: Completed `comm-001280` test-integrity remediation. `GatewayRuntimeTestSupport.swift` records a fully delivered provider response; `GmailGatewaySDKTests.swift` now waits for a direct 500 response, cancels during the 50 ms retry backoff, asserts `CANCELLED`, and proves the request count remains exactly one after the retry window. Current Xcode arm64 focused verification `/usr/bin/arch -arm64 /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift test --filter 'GmailGatewayCatalogTests|GmailGatewayRuntimeMatrixTests|DraftGatewayTests|MailboxGatewayTests|GmailGatewayCLIBehaviorTests|GmailGatewaySDKTests|GmailRequestProtocolTests'` passed 94 tests. Current full arm64 `swift build && swift test && swift run gmail-gateway-swift-smoke-tests && xcrun swiftlint --quiet --no-cache` passed 168 tests with smoke and lint clean. `git diff --check`, `git diff --cached --check`, scanner absence, Swift file-size, no-TypeScript/workflow diff, immutable GatewaySDKKit, and protected-main baseline checks passed. TASK-006 and TASK-007 are Completed; the plan remains In Progress and TASK-008 remains Pending for review, staging, local commit, and clean-worktree handoff. No staging, commit, or push occurred.
 - 2026-09-05: Returned TASK-006 to In Progress for Step 7 adversarial finding `comm-001285`. Post-dispatch Gmail mutations need an absolute response deadline because URLSession's inactivity timeout can be extended indefinitely by drip-fed bytes; expiry must cancel transport and preserve the non-retryable `MUTATION_OUTCOME_UNKNOWN` outcome. TASK-008 remains Pending; no staging, commit, or push occurred.
 - 2026-09-05: Completed `comm-001285` adversarial remediation. `GmailOAuthSupport.swift` applies an absolute response deadline capped at 30 seconds to every request, cancels the underlying task on expiry, and maps an expired dispatched Gmail mutation to `MUTATION_OUTCOME_UNKNOWN` through the existing effect-aware boundary. `GmailGatewaySDKTests.swift` uses an isolated URLProtocol host to prove both never-completing and drip-fed mutation transfers finish within the request deadline, cancel their transport, make one request, and return the non-retryable code without a retry. The accepted design records the 30-second cap. Current Xcode arm64 focused verification `/usr/bin/arch -arm64 /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift test --filter 'GmailGatewayCatalogTests|GmailGatewayRuntimeMatrixTests|DraftGatewayTests|MailboxGatewayTests|GmailGatewayCLIBehaviorTests|GmailGatewaySDKTests|GmailRequestProtocolTests'` passed 95 tests. Current full Xcode arm64 `swift build && swift test && swift run gmail-gateway-swift-smoke-tests && xcrun swiftlint --quiet --no-cache` passed 169 tests with smoke and lint clean. TASK-006 and TASK-007 are Completed; the plan remains In Progress and TASK-008 remains Pending for review, staging, local commit, and clean-worktree handoff. No staging, commit, or push occurred.
+- 2026-09-05: Completed TASK-008 after Step 7 acceptance. The exact phase 1d allowlist passed `git diff --cached --check` and was committed locally as `1d10c47` (`feat: replace Gmail scanner with gateway SDK runtime`). No push occurred. This archival update records the completed plan and clean-worktree handoff.
