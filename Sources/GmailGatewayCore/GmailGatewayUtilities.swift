@@ -1,11 +1,7 @@
 import Foundation
 
 func gmailGatewayVersion() -> String {
-    if let version = try? String(contentsOfFile: "VERSION", encoding: .utf8),
-       let trimmed = nonBlank(version) {
-        return trimmed
-    }
-    return "0.1.10"
+    "0.1.11"
 }
 
 func nonBlank(_ value: String?) -> String? {

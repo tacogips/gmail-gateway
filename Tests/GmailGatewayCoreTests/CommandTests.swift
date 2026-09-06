@@ -31,6 +31,10 @@ import Testing
     #expect(GmailGatewayCLI(mode: .directSender).run(arguments: ["version"], environment: [:]).stdout == expected)
 }
 
+@Test func embeddedVersionDoesNotDependOnAWorkingDirectoryVersionFile() {
+    #expect(gmailGatewayVersion() == "0.1.11")
+}
+
 @Test func tokenRefreshOAuthClientUsesConfiguredTokenURIAndAllowsPublicClient() throws {
     let credential = testCredential(oauthClientSecretJSON: """
         {
