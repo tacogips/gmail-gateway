@@ -17,8 +17,7 @@ let package = Package(
     .executable(name: "gmail-gateway-swift-smoke-tests", targets: ["GmailGatewaySwiftSmokeTests"])
   ],
   dependencies: [
-    // Replace this operator-managed local path with a pinned URL revision at release time.
-    .package(path: "../../gateway-sdk-kit")
+    .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0")
   ],
   targets: [
     .target(

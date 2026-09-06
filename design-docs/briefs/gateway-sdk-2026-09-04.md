@@ -76,7 +76,7 @@ try to reproduce that WIP here.
 
 ## Deliverables
 
-1. **Dependency.** `Package.swift`: `.package(path: "../../gateway-sdk-kit")` (this
+1. **Dependency.** `Package.swift`: `.package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0")` (this
    worktree is `/Users/taco/gits/tacogips/gmail-gateway-worktrees/gateway-sdk`) and
    product `GatewaySDKKit` on `GmailGatewayCore`. One-line comment that the operator
    switches it to a URL pin later.

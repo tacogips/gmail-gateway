@@ -1170,8 +1170,7 @@ Adding a new provider should usually require:
 ## Phase 1d Dependency, Validation, and Rollout
 
 `Package.swift` consumes product `GatewaySDKKit` through
-`.package(path: "../../gateway-sdk-kit")`; an adjacent comment records that the operator
-will replace the local path with a URL revision pin later. The package is immutable from
+`.package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0")`. The package is immutable from
 this work item: phase 1d must neither edit it nor copy its parser/runtime into
 gmail-gateway.
 

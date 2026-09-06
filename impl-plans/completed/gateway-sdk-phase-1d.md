@@ -28,7 +28,7 @@ Excluded: edits to either GatewaySDKKit checkout, packaging, changes in `/Users/
 
 ## Deliverables
 
-- [x] `Package.swift` consumes `GatewaySDKKit` through `.package(path: "../../gateway-sdk-kit")`, with the future URL-pin comment, and links its product only to `GmailGatewayCore`.
+- [x] `Package.swift` consumes `GatewaySDKKit` through `.package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0")` and links its product only to `GmailGatewayCore`.
 - [x] `Sources/GmailGatewayCore/Schema/GmailGatewaySchema*.swift` defines `gmailFull`, all schema types, summaries/destructive markers, and exact authorized catalogs for all five modes.
 - [x] `Sources/GmailGatewayCore/GraphQL/GmailGatewayResolvers*.swift` contains exactly one adapter per root field and preserves service authorization/error codes.
 - [x] `Sources/GmailGatewayCore/GraphQL/GmailGatewayGraphQLExecutor.swift` is the sole catalog runtime path used by CLI and SDK.

@@ -5,7 +5,7 @@ func gmailGatewayVersion() -> String {
        let trimmed = nonBlank(version) {
         return trimmed
     }
-    return "0.1.9"
+    return "0.1.10"
 }
 
 func nonBlank(_ value: String?) -> String? {
