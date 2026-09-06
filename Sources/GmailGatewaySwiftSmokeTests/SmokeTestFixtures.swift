@@ -60,7 +60,12 @@ func createFixture(
     let tokenPath = URL(fileURLWithPath: directories.tokensDir)
         .appendingPathComponent("account.json")
         .path
-    try writeText(clientSecretPath, "{\"installed\":true}\n")
+    try writeText(
+        clientSecretPath,
+        """
+        {"installed":{"client_id":"smoke-test.apps.googleusercontent.com","auth_uri":"https://accounts.google.com/o/oauth2/v2/auth","token_uri":"https://oauth2.googleapis.com/token","redirect_uris":["http://127.0.0.1/oauth2callback"]}}
+        """
+    )
 
     let configPath = URL(fileURLWithPath: directories.configDir)
         .appendingPathComponent("config.toml")

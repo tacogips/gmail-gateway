@@ -1,7 +1,7 @@
 import Foundation
 
 func gmailGatewayVersion() -> String {
-    "0.1.11"
+    "0.1.12"
 }
 
 func nonBlank(_ value: String?) -> String? {
@@ -10,6 +10,12 @@ func nonBlank(_ value: String?) -> String? {
     }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
+}
+
+func containsHeaderLineBreak(_ value: String) -> Bool {
+    value.unicodeScalars.contains { scalar in
+        scalar.value == 10 || scalar.value == 13
+    }
 }
 
 func normalizedPath(_ path: String) -> String {

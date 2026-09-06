@@ -1,13 +1,34 @@
 import Foundation
 
+private struct PersistentDoctorCredentialInspection {
+    let credential: [String: Any]
+    let status: [String: Any]
+    let issues: [[String: Any]]
+}
+
 struct GmailGatewayDoctor {
     let mode: GmailGatewayCLIMode
     let configPath: String?
     let configPathFromFlag: Bool
     let environment: [String: String]
+    let preloadedConfig: GmailGatewayConfig?
+
+    init(
+        mode: GmailGatewayCLIMode,
+        configPath: String?,
+        configPathFromFlag: Bool,
+        environment: [String: String],
+        preloadedConfig: GmailGatewayConfig? = nil
+    ) {
+        self.mode = mode
+        self.configPath = configPath
+        self.configPathFromFlag = configPathFromFlag
+        self.environment = environment
+        self.preloadedConfig = preloadedConfig
+    }
 
     func run(pretty: Bool) throws -> GmailGatewayCommandResult {
-        let config = try GmailGatewayConfigLoader.loadConfig(configPath: configPath, environment: environment)
+        let config = try preloadedConfig ?? GmailGatewayConfigLoader.loadConfig(configPath: configPath, environment: environment)
         var issues: [[String: Any]] = []
         let credentials = config.credentials
             .sorted { $0.id < $1.id }
@@ -44,6 +65,203 @@ struct GmailGatewayDoctor {
             stdout: jsonString(payload, pretty: pretty) + "\n",
             stderr: ""
         )
+    }
+
+    func runPersistent(
+        coordinator: GmailAuthCoordinator,
+        pretty: Bool
+    ) async throws -> GmailGatewayCommandResult {
+        let config = try preloadedConfig ?? GmailGatewayConfigLoader.loadConfig(configPath: configPath, environment: environment)
+        var issues: [[String: Any]] = []
+        var statusByCredentialID: [String: [String: Any]] = [:]
+        var credentials: [[String: Any]] = []
+
+        for credential in config.credentials.sorted(by: { $0.id < $1.id }) {
+            let inspection = await inspectPersistentCredential(credential, coordinator: coordinator)
+            credentials.append(inspection.credential)
+            statusByCredentialID[credential.id] = inspection.status
+            issues.append(contentsOf: inspection.issues)
+        }
+        let accounts = config.accounts
+            .sorted { $0.id < $1.id }
+            .map { account in
+                inspectPersistentAccount(account, statusByCredentialID: statusByCredentialID, issues: &issues)
+            }
+        return doctorResult(
+            config: config,
+            credentials: credentials,
+            accounts: accounts,
+            issues: issues,
+            pretty: pretty
+        )
+    }
+
+    private func doctorResult(
+        config: GmailGatewayConfig,
+        credentials: [[String: Any]],
+        accounts: [[String: Any]],
+        issues: [[String: Any]],
+        pretty: Bool
+    ) -> GmailGatewayCommandResult {
+        let hasConfigurationIssue = issues.contains { $0["category"] as? String == "CONFIGURATION" }
+        let hasAuthenticationIssue = issues.contains { $0["category"] as? String == "AUTHENTICATION" }
+        let exitCode: GmailGatewayExitCode
+        if hasConfigurationIssue {
+            exitCode = .configurationError
+        } else if hasAuthenticationIssue {
+            exitCode = .authenticationBootstrapError
+        } else {
+            exitCode = .success
+        }
+        let payload: [String: Any] = [
+            "ok": issues.isEmpty,
+            "executable": mode.executableName,
+            "config": inspectConfig(config),
+            "environment": inspectEnvironment(config: config),
+            "credentials": credentials,
+            "accounts": accounts,
+            "issues": issues
+        ]
+        return GmailGatewayCommandResult(
+            exitCode: exitCode.rawValue,
+            stdout: jsonString(payload, pretty: pretty) + "\n",
+            stderr: ""
+        )
+    }
+
+    private func inspectPersistentCredential(
+        _ credential: CredentialConfig,
+        coordinator: GmailAuthCoordinator
+    ) async -> PersistentDoctorCredentialInspection {
+        do {
+            let status = try await coordinator.status(credentialId: credential.id)
+            let clientState = status["clientState"] as? String ?? AuthState.invalid.rawValue
+            let tokenState = status["tokenState"] as? String ?? AuthState.invalid.rawValue
+            var issues: [[String: Any]] = []
+            if clientState != AuthState.ready.rawValue {
+                issues.append(issue(
+                    category: "CONFIGURATION",
+                    code: "OAUTH_CLIENT_\(clientState)",
+                    message: "Credential \(credential.id) OAuth client state is \(clientState)",
+                    credentialId: credential.id
+                ))
+            }
+            if tokenState != AuthState.ready.rawValue {
+                issues.append(issue(
+                    category: "AUTHENTICATION",
+                    code: "AUTH_\(tokenState)",
+                    message: "Credential \(credential.id) authentication state is \(tokenState)",
+                    credentialId: credential.id
+                ))
+            }
+            return PersistentDoctorCredentialInspection(
+                credential: persistentCredentialOutput(credential, status: status),
+                status: status,
+                issues: issues
+            )
+        } catch let error as GmailGatewayError {
+            let status: [String: Any] = [
+                "credentialId": credential.id,
+                "clientState": AuthState.invalid.rawValue,
+                "tokenState": AuthState.missing.rawValue,
+                "clientSource": "MISSING",
+                "tokenSource": "MISSING"
+            ]
+            return PersistentDoctorCredentialInspection(
+                credential: persistentCredentialOutput(credential, status: status),
+                status: status,
+                issues: [issue(
+                    category: "CONFIGURATION",
+                    code: "ACCESS_MODE_MISMATCH",
+                    message: error.message,
+                    credentialId: credential.id
+                )]
+            )
+        } catch {
+            let status: [String: Any] = [
+                "credentialId": credential.id,
+                "clientState": AuthState.invalid.rawValue,
+                "tokenState": AuthState.invalid.rawValue,
+                "clientSource": "MISSING",
+                "tokenSource": "MISSING"
+            ]
+            return PersistentDoctorCredentialInspection(
+                credential: persistentCredentialOutput(credential, status: status),
+                status: status,
+                issues: [issue(
+                    category: "CONFIGURATION",
+                    code: "PERSISTENT_AUTH_INSPECTION_FAILED",
+                    message: "Persistent OAuth state could not be inspected",
+                    credentialId: credential.id
+                )]
+            )
+        }
+    }
+
+    private func persistentCredentialOutput(
+        _ credential: CredentialConfig,
+        status: [String: Any]
+    ) -> [String: Any] {
+        let clientState = status["clientState"] as? String ?? AuthState.invalid.rawValue
+        let tokenState = status["tokenState"] as? String ?? AuthState.invalid.rawValue
+        let clientSource = (status["clientSource"] as? String) ?? "MISSING"
+        let tokenSource = (status["tokenSource"] as? String) ?? "MISSING"
+        let clientIssue: Any = clientState == AuthState.ready.rawValue ? NSNull() : clientState
+        let requiredAccessMode = persistentPolicy(for: mode).requiredAccessMode
+        let accessModeReady = credential.accessMode == requiredAccessMode
+        return [
+            "id": credential.id,
+            "provider": credential.provider.rawValue,
+            "configuredAccessMode": credential.accessMode.rawValue,
+            "requiredCapability": mode.requiredCapability?.rawValue as Any? ?? NSNull(),
+            "acceptedAccessModes": requiredAccessMode.map { [$0.rawValue] } ?? [],
+            "accessModeReady": accessModeReady,
+            "oauthClient": [
+                "ready": clientState == AuthState.ready.rawValue,
+                "source": clientSource,
+                "path": credential.oauthClientSecretPath,
+                "issue": clientIssue
+            ],
+            "auth": [
+                "ready": tokenState == AuthState.ready.rawValue,
+                "state": tokenState,
+                "source": tokenSource,
+                "tokenStorePath": credential.tokenStorePath,
+                "tokenStoreExists": tokenState != AuthState.missing.rawValue,
+                "grantedAccessMode": credential.accessMode.rawValue,
+                "expiresAt": status["expiresAt"] ?? NSNull(),
+                "hasRefreshToken": status["hasRefreshToken"] ?? false,
+                "emailAddress": status["emailAddress"] ?? NSNull()
+            ]
+        ]
+    }
+
+    private func inspectPersistentAccount(
+        _ account: AccountConfig,
+        statusByCredentialID: [String: [String: Any]],
+        issues: inout [[String: Any]]
+    ) -> [String: Any] {
+        let authenticatedEmail = statusByCredentialID[account.credentialId]?["emailAddress"] as? String
+        let identityMatches = authenticatedEmail.map {
+            $0.caseInsensitiveCompare(account.emailAddress) == .orderedSame
+        }
+        if identityMatches == false {
+            issues.append(issue(
+                category: "AUTHENTICATION",
+                code: "ACCOUNT_IDENTITY_MISMATCH",
+                message: "Account \(account.id) email does not match its authenticated Gmail identity",
+                credentialId: account.credentialId,
+                accountId: account.id
+            ))
+        }
+        return [
+            "id": account.id,
+            "credentialId": account.credentialId,
+            "configuredEmailAddress": account.emailAddress,
+            "authenticatedEmailAddress": authenticatedEmail as Any? ?? NSNull(),
+            "identityMatches": identityMatches as Any? ?? NSNull(),
+            "fallback": account.isFallback
+        ]
     }
 
     private func inspectConfig(_ config: GmailGatewayConfig) -> [String: Any] {

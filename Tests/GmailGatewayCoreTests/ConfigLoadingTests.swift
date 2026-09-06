@@ -58,6 +58,55 @@ import Testing
     #expect(validateResult.stderr.contains("oauth_client_secret_path is not readable"))
 }
 
+@Test func persistentExecutablesValidateKeychainOnlyConfigurations() async throws {
+    let cases: [(GmailGatewayCLIMode, AccessMode)] = [
+        (.reader, .read),
+        (.draftGateway, .readSend),
+        (.directSender, .readSend)
+    ]
+    for (mode, accessMode) in cases {
+        let paths = temporaryConfigPaths()
+        defer { try? FileManager.default.removeItem(atPath: paths.root) }
+        try writeConfigSource(
+            paths: paths,
+            source: """
+            [storage]
+            cache_dir = "cache"
+            attachment_dir = "attachments"
+            allowed_send_attachment_roots = ["send"]
+
+            [[credentials]]
+            id = "gmail-personal"
+            provider = "gmail"
+            access_mode = "\(accessMode.rawValue)"
+
+            [[accounts]]
+            id = "personal"
+            provider = "gmail"
+            email_address = "person@example.com"
+            credential_id = "gmail-personal"
+            default_label_ids = ["INBOX"]
+            """
+        )
+        let clientURL = URL(fileURLWithPath: paths.root).appendingPathComponent("setup-client.json")
+        try Data(#"{"installed":{"client_id":"keychain-only.apps.googleusercontent.com","project_id":"keychain-only","auth_uri":"https://accounts.google.com/o/oauth2/v2/auth","token_uri":"https://oauth2.googleapis.com/token","client_secret":"test-secret","redirect_uris":["http://127.0.0.1:8080/oauth2callback"]}}"#.utf8).write(to: clientURL)
+        let store = TestSecureCredentialStore()
+        let emptyVaultResult = await GmailGatewayCLI(mode: mode, authPolicy: .persistent(requiredAccessMode: accessMode), secureCredentialStore: store)
+            .runPersistent(arguments: ["config", "validate", "--config", paths.root + "/config.toml"], environment: [:])
+        #expect(emptyVaultResult.exitCode == GmailGatewayExitCode.configurationError.rawValue)
+        #expect(emptyVaultResult.stderr.contains("no persistent Keychain client is available"))
+        let config = try GmailGatewayConfigLoader.loadConfig(configPath: paths.root + "/config.toml", environment: [:])
+        let coordinator = GmailAuthCoordinator(config: config, policy: .persistent(requiredAccessMode: accessMode), store: store)
+        _ = try await coordinator.setup(
+            credentialId: "gmail-personal",
+            options: GmailOAuthSetupOptions(clientSecretPath: clientURL.path, replace: false, confirmedCredentialId: nil)
+        )
+        let result = await GmailGatewayCLI(mode: mode, authPolicy: .persistent(requiredAccessMode: accessMode), secureCredentialStore: store)
+            .runPersistent(arguments: ["config", "validate", "--config", paths.root + "/config.toml"], environment: [:])
+        #expect(result.exitCode == GmailGatewayExitCode.success.rawValue)
+    }
+}
+
 @Test func tomlSubsetAcceptsTrailingCommentsAndDecodesBasicStringEscapes() throws {
     let paths = temporaryConfigPaths()
     defer {

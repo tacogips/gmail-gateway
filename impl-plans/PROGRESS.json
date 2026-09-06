@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-09-01T00:00:00+09:00",
+  "lastUpdated": "2026-09-04T23:43:00+09:00",
   "phases": {
     "1": {
       "status": "COMPLETED"
@@ -8,10 +8,10 @@
       "status": "IN_PROGRESS"
     },
     "3": {
-      "status": "BLOCKED"
+      "status": "COMPLETED"
     },
     "4": {
-      "status": "BLOCKED"
+      "status": "COMPLETED"
     }
   },
   "plans": {
@@ -50,7 +50,7 @@
     },
     "gmail-oauth-bootstrap": {
       "phase": 2,
-      "status": "In Progress",
+      "status": "Completed",
       "tasks": {
         "TASK-001": {
           "status": "Implemented",
@@ -131,6 +131,154 @@
           "status": "Completed",
           "parallelizable": false,
           "deps": []
+        }
+      }
+    },
+    "persistent-auth-commands": {
+      "phase": 2,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001"
+          ]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "TASK-002"
+          ]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "TASK-002"
+          ]
+        },
+        "TASK-005": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-003",
+            "TASK-004"
+          ]
+        },
+        "TASK-006": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "TASK-002"
+          ]
+        },
+        "TASK-007": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-003",
+            "TASK-004",
+            "TASK-005",
+            "TASK-006"
+          ]
+        },
+        "TASK-008": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-007"
+          ]
+        }
+      }
+    },
+    "persistent-auth-review-hardening": {
+      "phase": 3,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "persistent-auth-commands:TASK-004",
+            "persistent-auth-commands:TASK-005"
+          ]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "persistent-auth-commands:TASK-004",
+            "persistent-auth-commands:TASK-005"
+          ]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "persistent-auth-commands:TASK-004",
+            "persistent-auth-commands:TASK-005"
+          ]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001",
+            "TASK-002",
+            "TASK-003"
+          ]
+        }
+      }
+    },
+    "persistent-auth-accepted-design-closure": {
+      "phase": 4,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "persistent-auth-review-hardening:TASK-001"
+          ]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001",
+            "persistent-auth-review-hardening:TASK-004"
+          ]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "persistent-auth-review-hardening:TASK-001"
+          ]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "persistent-auth-review-hardening:TASK-001"
+          ]
+        },
+        "TASK-005": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001",
+            "TASK-002",
+            "TASK-003",
+            "TASK-004"
+          ]
         }
       }
     }

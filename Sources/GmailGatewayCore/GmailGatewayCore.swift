@@ -171,6 +171,30 @@ public struct CredentialConfig: Sendable {
     public let oauthClientSecretJSON: String?
     public let tokenStorePath: String
     public let tokenStoreJSON: String?
+    let oauthClientSecretSource: GmailCredentialSourceKind
+    let tokenStoreSource: GmailCredentialSourceKind
+
+    init(
+        id: String,
+        provider: MailProvider,
+        accessMode: AccessMode,
+        oauthClientSecretPath: String,
+        oauthClientSecretJSON: String?,
+        tokenStorePath: String,
+        tokenStoreJSON: String?,
+        oauthClientSecretSource: GmailCredentialSourceKind = .configuredPath,
+        tokenStoreSource: GmailCredentialSourceKind = .configuredPath
+    ) {
+        self.id = id
+        self.provider = provider
+        self.accessMode = accessMode
+        self.oauthClientSecretPath = oauthClientSecretPath
+        self.oauthClientSecretJSON = oauthClientSecretJSON
+        self.tokenStorePath = tokenStorePath
+        self.tokenStoreJSON = tokenStoreJSON
+        self.oauthClientSecretSource = oauthClientSecretSource
+        self.tokenStoreSource = tokenStoreSource
+    }
 }
 
 public struct AccountConfig: Sendable {

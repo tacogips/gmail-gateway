@@ -26,7 +26,7 @@ final class TestGmailRequestCaptureProtocol: URLProtocol {
     nonisolated(unsafe) static var expectedListQuery: String?
 
     override static func canInit(with request: URLRequest) -> Bool {
-        request.url?.host == "gmail.googleapis.com"
+        request.url?.host == "gmail.googleapis.com" || request.url?.host == "oauth2.googleapis.com"
     }
 
     override static func canonicalRequest(for request: URLRequest) -> URLRequest {

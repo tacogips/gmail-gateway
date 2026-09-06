@@ -186,6 +186,32 @@ it exposes. Both must allow an operation for it to run.
 `read_send` cannot mutate stored mail and `read_modify` cannot send, so a credential scoped
 for one workflow cannot be borrowed for the other.
 
+## Persistent OAuth Setup
+
+`gmail-gateway-reader`, `gmail-gateway-sender`, and `gmail-gateway-draft` can
+keep a Desktop OAuth client and token in the macOS Keychain. Run setup once,
+then login for the executable's fixed access mode:
+
+```bash
+gmail-gateway-reader auth setup --credential gmail-personal --client-secret-path ./google-client.json
+gmail-gateway-reader auth login --credential gmail-personal
+gmail-gateway-reader auth status --credential gmail-personal
+gmail-gateway-reader auth revoke --credential gmail-personal --confirm-credential gmail-personal
+```
+
+Use the sender or draft executable for a `read_send` credential. Setup accepts
+only a Google Desktop client JSON file. Replacing a stored client requires both
+`--replace` and an exact `--confirm-credential`; replacing it clears its token.
+Status and command output redact OAuth secrets and Keychain identifiers.
+
+Explicit credential environment variables and configured credential paths still
+take precedence. Existing token files without exact scope metadata and a client
+fingerprint require one re-login. `gmail-gateway-threads` and
+`gmail-gateway-message-box` retain their legacy authentication contract and do
+not expose `auth setup`. For a Keychain-only TOML credential, omit both
+`oauth_client_secret_path` and `token_store_path`; omitted paths are synthesized
+fallbacks, so the persistent profile is selected first.
+
 **Permanent delete requires `full`.** `deleteThread`, `deleteMessage`, and
 `batchDeleteMessages` are irreversible, bypass Trash, and cannot be undone; Gmail accepts
 only its full-access scope for them. Prefer `trashThread` and `trashMessage`, which are

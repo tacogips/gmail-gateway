@@ -382,7 +382,7 @@ func validateOutboundInput(
     let headerValues = [account.emailAddress] + recipients
         + [input.subject, input.replyTo, input.inReplyTo, input.references].compactMap { $0 }
     try headerValues.forEach { value in
-        if value.contains("\r") || value.contains("\n") {
+        if containsHeaderLineBreak(value) {
             throw GmailGatewayError(
                 "\(operation.mutationName) header values must not contain line breaks",
                 code: .invalidArgument,

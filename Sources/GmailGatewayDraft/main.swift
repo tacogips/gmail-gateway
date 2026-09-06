@@ -7,7 +7,7 @@ import Glibc
 import Darwin
 #endif
 
-let result = GmailGatewayCLI(mode: .draftGateway).run(
+let result = await GmailGatewayCLI(mode: .draftGateway, authPolicy: .persistent(requiredAccessMode: .readSend)).runPersistent(
     arguments: Array(CommandLine.arguments.dropFirst()),
     environment: ProcessInfo.processInfo.environment
 )

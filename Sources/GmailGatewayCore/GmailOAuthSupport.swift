@@ -338,28 +338,18 @@ private func gmailHTTPRetryDelay(attempt: Int) -> TimeInterval {
     0.05 * Double(attempt)
 }
 
-private func gmailProviderErrorDetails(statusCode: Int, data: Data) -> [String: String] {
+func gmailProviderErrorDetails(statusCode: Int, data: Data) -> [String: String] {
     var details = ["httpStatus": String(statusCode)]
     guard let error = try? JSONDecoder().decode(GoogleProviderErrorResponse.self, from: data).error else {
-        if let body = String(data: data, encoding: .utf8),
-           !body.isEmpty {
-            details["bodySnippet"] = String(body.prefix(1_000))
-        }
         return details
     }
 
     if let code = error.code {
         details["providerErrorCode"] = String(code)
     }
-    if let status = error.status {
-        details["providerErrorStatus"] = String(status.prefix(200))
-    }
-    if let message = error.message {
-        details["providerErrorMessage"] = String(message.prefix(500))
-    }
-    if let reason = error.errors?.first?.reason {
-        details["providerErrorReason"] = String(reason.prefix(200))
-    }
+    // Google error strings are provider-controlled and may echo a bearer token, client secret,
+    // or a request parameter. Do not surface any provider string field: there is no reliable
+    // allow-list for values that can be returned by a proxy or future provider response.
     return details
 }
 
@@ -386,18 +376,34 @@ func writeGmailOAuthTokenStore(
     _ tokenStore: GmailOAuthTokenStore,
     to path: String,
     errorMessage: String,
-    exitCode: GmailGatewayExitCode
+    exitCode: GmailGatewayExitCode,
+    replacing expectedState: PersistentTokenFileExpectedState? = nil
 ) throws {
     do {
-        let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
         let data = try JSONEncoder().encode(tokenStore)
-        try data.write(to: URL(fileURLWithPath: path), options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+        if let expectedState {
+            let credential = CredentialConfig(
+                id: "persistent-token-file",
+                provider: .gmail,
+                accessMode: tokenStore.accessMode,
+                oauthClientSecretPath: "",
+                oauthClientSecretJSON: nil,
+                tokenStorePath: path,
+                tokenStoreJSON: nil
+            )
+            try writeSecureGmailOAuthTokenData(
+                data,
+                to: path,
+                credential: credential,
+                errorMessage: errorMessage,
+                exitCode: exitCode,
+                replacing: expectedState
+            )
+        } else {
+            try writeLegacyGmailOAuthTokenData(data, to: path)
+        }
+    } catch let error as GmailGatewayError {
+        throw error
     } catch {
         throw GmailGatewayError(
             errorMessage,
@@ -406,6 +412,21 @@ func writeGmailOAuthTokenStore(
             details: ["path": path, "cause": error.localizedDescription]
         )
     }
+}
+
+/// The legacy executables intentionally retain their established atomic token
+/// replacement behavior. Persistent coordinator flows pass an expected state
+/// and use the descriptor-relative transaction writer while holding its
+/// lifecycle lock.
+private func writeLegacyGmailOAuthTokenData(_ data: Data, to path: String) throws {
+    let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    try data.write(to: URL(fileURLWithPath: path), options: [.atomic])
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
 }
 
 func gmailAccessTokenIsFresh(
@@ -557,6 +578,29 @@ private func refreshGmailAccessToken(
     tokenStore: GmailOAuthTokenStore,
     persistencePolicy: GmailRefreshPersistencePolicy
 ) throws -> String {
+    let refreshed = try refreshedGmailOAuthTokenStore(credential: credential, tokenStore: tokenStore)
+    guard credential.tokenStoreJSON == nil else {
+        return refreshed.accessToken
+    }
+    do {
+        try writeGmailOAuthTokenStore(
+            refreshed,
+            to: credential.tokenStorePath,
+            errorMessage: "Failed to write refreshed Gmail token store",
+            exitCode: .graphqlExecutionError
+        )
+    } catch {
+        if persistencePolicy == .required {
+            throw error
+        }
+    }
+    return refreshed.accessToken
+}
+
+func refreshedGmailOAuthTokenStore(
+    credential: CredentialConfig,
+    tokenStore: GmailOAuthTokenStore
+) throws -> GmailOAuthTokenStore {
     guard let refreshToken = nonBlank(tokenStore.refreshToken) else {
         throw GmailGatewayError(
             "Stored Gmail access token is expired and has no refresh token",
@@ -610,6 +654,16 @@ private func refreshGmailAccessToken(
             details: ["credentialId": credential.id]
         )
     }
+    if tokenStore.clientFingerprint != nil,
+       let returnedScope = tokenResponse.scope,
+       Set(normalizedGmailScopes(returnedScope)) != Set(gmailScopes(accessMode: credential.accessMode)) {
+        throw GmailGatewayError(
+            "Gmail token refresh returned incompatible scopes",
+            code: .authRequired,
+            exitCode: .graphqlExecutionError,
+            details: ["credentialId": credential.id]
+        )
+    }
 
     let refreshed = GmailOAuthTokenStore(
         accessMode: tokenStore.accessMode,
@@ -620,22 +674,11 @@ private func refreshGmailAccessToken(
         expiresAt: tokenResponse.expiresIn.map {
             ISO8601DateFormatter().string(from: Date().addingTimeInterval(TimeInterval($0)))
         },
-        emailAddress: tokenStore.emailAddress
+        emailAddress: tokenStore.emailAddress,
+        clientFingerprint: tokenStore.clientFingerprint,
+        schemaVersion: tokenStore.schemaVersion,
+        provider: tokenStore.provider,
+        credentialId: tokenStore.credentialId
     )
-    guard credential.tokenStoreJSON == nil else {
-        return accessToken
-    }
-    do {
-        try writeGmailOAuthTokenStore(
-            refreshed,
-            to: credential.tokenStorePath,
-            errorMessage: "Failed to write refreshed Gmail token store",
-            exitCode: .graphqlExecutionError
-        )
-    } catch {
-        if persistencePolicy == .required {
-            throw error
-        }
-    }
-    return accessToken
+    return refreshed
 }

@@ -96,7 +96,9 @@ public enum GmailGatewayConfigLoader {
         configPath: String? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         validateOAuthClientSecrets: Bool = false,
-        policy: GmailGatewayConfigurationPolicy = .cliDefaults
+        policy: GmailGatewayConfigurationPolicy = .cliDefaults,
+        allowMissingSynthesizedOAuthClient: Bool = false,
+        deferSynthesizedOAuthClientValidation: Bool = false
     ) throws -> GmailGatewayConfig {
         let explicitConfigPath = nonBlank(configPath) ?? nonBlank(environment["GMAIL_GATEWAY_CONFIG"])
         let usesImplicitDefaultConfig = explicitConfigPath == nil && policy == .cliDefaults
@@ -120,7 +122,18 @@ public enum GmailGatewayConfigLoader {
         } catch {
             if usesImplicitDefaultConfig,
                !FileManager.default.fileExists(atPath: selectedConfigPath) {
-                return try defaultConfig(configPath: selectedConfigPath, environment: environment)
+                let config = try defaultConfig(configPath: selectedConfigPath, environment: environment)
+                if validateOAuthClientSecrets {
+                    try validateOAuthClientSecretPaths(
+                        config.credentials,
+                        // The implicit fallback intentionally has no required
+                        // client file. Explicit environment sources still use
+                        // their selected source and must parse successfully.
+                        allowMissingSynthesizedOAuthClient: true,
+                        deferSynthesizedOAuthClientValidation: deferSynthesizedOAuthClientValidation
+                    )
+                }
+                return config
             }
             throw GmailGatewayError(
                 "Failed to read config: \(selectedConfigPath)",
@@ -166,7 +179,11 @@ public enum GmailGatewayConfigLoader {
         try validateAccountCredentialLinks(credentials: credentials, accounts: accounts)
 
         if validateOAuthClientSecrets {
-            try validateOAuthClientSecretPaths(credentials)
+            try validateOAuthClientSecretPaths(
+                credentials,
+                allowMissingSynthesizedOAuthClient: allowMissingSynthesizedOAuthClient,
+                deferSynthesizedOAuthClientValidation: deferSynthesizedOAuthClientValidation
+            )
         }
 
         return GmailGatewayConfig(
@@ -179,14 +196,22 @@ public enum GmailGatewayConfigLoader {
 
     public static func validateConfig(
         configPath: String? = nil,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        allowMissingSynthesizedOAuthClient: Bool = false,
+        deferSynthesizedOAuthClientValidation: Bool = false
     ) throws -> [String: Any] {
         let config = try loadConfig(
             configPath: configPath,
             environment: environment,
-            validateOAuthClientSecrets: true
+            validateOAuthClientSecrets: true,
+            allowMissingSynthesizedOAuthClient: allowMissingSynthesizedOAuthClient,
+            deferSynthesizedOAuthClientValidation: deferSynthesizedOAuthClientValidation
         )
-        return [
+        return validationOutput(config)
+    }
+
+    static func validationOutput(_ config: GmailGatewayConfig) -> [String: Any] {
+        [
             "ok": true,
             "configPath": config.configPath,
             "fallbackConfig": config.accounts.contains { $0.isFallback },
@@ -243,7 +268,16 @@ public enum GmailGatewayConfigLoader {
                 credentialId: defaultCredentialId,
                 valueKey: "token_store_json",
                 environment: environment
-            )
+            ),
+            oauthClientSecretSource: nonBlank(environment[GmailGatewayConfigLoader.getCredentialPathEnvVarName(
+                credentialId: defaultCredentialId,
+                pathKey: "oauth_client_secret_path"
+            )]) == nil ? .synthesizedDefault : .environmentPath,
+            tokenStoreSource: nonBlank(environment[GmailGatewayConfigLoader.getCredentialPathEnvVarName(
+                credentialId: defaultCredentialId,
+                pathKey: "token_store_path"
+            )]) != nil ? .environmentPath :
+                (nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) == nil ? .synthesizedDefault : .relocatedPath)
         )
         return GmailGatewayConfig(
             configPath: configPath,
@@ -526,33 +560,72 @@ private func parseCredentialConfig(
             valueKey: "token_store_json"
         )
     ])
+    let oauthPath = try resolvePersistentCredentialPath(
+        configPath: configPath,
+        credentialId: credentialId,
+        pathKey: "oauth_client_secret_path",
+        configValue: readOptionalString(record["oauth_client_secret_path"], "\(contextBase).oauth_client_secret_path"),
+        synthesizedValue: "google-client.json",
+        environment: environment,
+        policy: policy
+    )
+    let tokenPath = try resolvePersistentCredentialPath(
+        configPath: configPath,
+        credentialId: credentialId,
+        pathKey: "token_store_path",
+        configValue: readOptionalString(record["token_store_path"], "\(contextBase).token_store_path"),
+        synthesizedValue: URL(fileURLWithPath: GmailGatewayConfigLoader.resolveDefaultCredentialDirectory(environment: environment))
+            .appendingPathComponent("\(credentialId).json")
+            .path,
+        environment: environment,
+        policy: policy
+    )
     return CredentialConfig(
         id: credentialId,
         provider: try readProvider(record["provider"], "\(contextBase).provider"),
         accessMode: try readAccessMode(record["access_mode"], "\(contextBase).access_mode"),
-        oauthClientSecretPath: try resolveCredentialPath(CredentialPathRequest(
-            configPath: configPath,
-            credentialId: credentialId,
-            pathKey: "oauth_client_secret_path",
-            configValue: readOptionalString(
-                record["oauth_client_secret_path"],
-                "\(contextBase).oauth_client_secret_path"
-            ),
-            environment: environment,
-            context: "\(contextBase).oauth_client_secret_path",
-            policy: policy
-        )),
+        oauthClientSecretPath: oauthPath.path,
         oauthClientSecretJSON: oauthClientSecretJSON,
-        tokenStorePath: try resolveCredentialPath(CredentialPathRequest(
-            configPath: configPath,
-            credentialId: credentialId,
-            pathKey: "token_store_path",
-            configValue: readOptionalString(record["token_store_path"], "\(contextBase).token_store_path"),
-            environment: environment,
-            context: "\(contextBase).token_store_path",
-            policy: policy
-        )),
-        tokenStoreJSON: tokenStoreJSON
+        tokenStorePath: tokenPath.path,
+        tokenStoreJSON: tokenStoreJSON,
+        oauthClientSecretSource: oauthPath.source,
+        tokenStoreSource: tokenPath.source
+    )
+}
+
+private struct PersistentCredentialPath {
+    let path: String
+    let source: GmailCredentialSourceKind
+}
+
+private func resolvePersistentCredentialPath(
+    configPath: String,
+    credentialId: String,
+    pathKey: String,
+    configValue: String?,
+    synthesizedValue: String,
+    environment: [String: String],
+    policy: GmailGatewayConfigurationPolicy
+) throws -> PersistentCredentialPath {
+    let envName = GmailGatewayConfigLoader.getCredentialPathEnvVarName(credentialId: credentialId, pathKey: pathKey)
+    if let value = nonBlank(environment[envName]) {
+        return PersistentCredentialPath(
+            path: try resolveConfigRelativePath(configPath: configPath, rawPath: value, policy: policy),
+            source: .environmentPath
+        )
+    }
+    if let configValue {
+        return PersistentCredentialPath(
+            path: try resolveConfigRelativePath(configPath: configPath, rawPath: configValue, policy: policy),
+            source: .configuredPath
+        )
+    }
+    let source: GmailCredentialSourceKind = pathKey == "token_store_path" && nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) != nil
+        ? .relocatedPath
+        : .synthesizedDefault
+    return PersistentCredentialPath(
+        path: try resolveConfigRelativePath(configPath: configPath, rawPath: synthesizedValue, policy: policy),
+        source: source
     )
 }
 
@@ -640,14 +713,41 @@ private func usesHomeExpansion(_ path: String) -> Bool {
     path.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("~")
 }
 
-private func validateOAuthClientSecretPaths(_ credentials: [CredentialConfig]) throws {
-    for credential in credentials
-        where credential.oauthClientSecretJSON == nil &&
-        !FileManager.default.isReadableFile(atPath: credential.oauthClientSecretPath) {
-        throw configError(
-            "credentials.\(credential.id).oauth_client_secret_path is not readable: " +
-                credential.oauthClientSecretPath
-        )
+private func validateOAuthClientSecretPaths(
+    _ credentials: [CredentialConfig],
+    allowMissingSynthesizedOAuthClient: Bool,
+    deferSynthesizedOAuthClientValidation: Bool
+) throws {
+    for credential in credentials {
+        if let clientJSON = credential.oauthClientSecretJSON {
+            _ = try loadGmailOAuthClientRecord(from: Data(clientJSON.utf8))
+            continue
+        }
+
+        // Persistent validation must preserve the same vault-before-file
+        // precedence used during normal resolution. Its coordinator validates
+        // this source after attempting the exact vault profile, so a malformed
+        // lower-priority synthesized file cannot reject a valid vault profile.
+        if deferSynthesizedOAuthClientValidation,
+           credential.oauthClientSecretSource == .synthesizedDefault {
+            continue
+        }
+        let mayUsePersistentClient = allowMissingSynthesizedOAuthClient &&
+            credential.oauthClientSecretSource == .synthesizedDefault
+        guard FileManager.default.isReadableFile(atPath: credential.oauthClientSecretPath) else {
+            if mayUsePersistentClient {
+                continue
+            }
+            throw configError(
+                "credentials.\(credential.id).oauth_client_secret_path is not readable: " +
+                    credential.oauthClientSecretPath
+            )
+        }
+
+        // Environment JSON, environment paths, and TOML paths have already
+        // been resolved by precedence. Validate that selected source with the
+        // same parser used by setup, login, and normal credential resolution.
+        _ = try loadGmailOAuthClientRecord(from: credential.oauthClientSecretPath)
     }
 }
 

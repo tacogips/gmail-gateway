@@ -716,7 +716,7 @@ struct GmailRequestProtocolTests {
         }
     }
 
-    @Test func providerErrorDetailsUseGoogleErrorFieldsWhenAvailable() throws {
+    @Test func providerErrorDetailsExposeOnlyNumericProviderMetadata() throws {
         TestGmailRequestCaptureProtocol.reset()
         TestGmailRequestCaptureProtocol.responseStatusCode = 403
         TestGmailRequestCaptureProtocol.responseData = Data("""
@@ -744,10 +744,42 @@ struct GmailRequestProtocolTests {
 
         #expect(error.code == .providerApiError)
         #expect(error.details["httpStatus"] == "403")
-        #expect(error.details["providerErrorStatus"] == "PERMISSION_DENIED")
-        #expect(error.details["providerErrorMessage"] == "quota exceeded")
-        #expect(error.details["providerErrorReason"] == "dailyLimitExceeded")
+        #expect(error.details["providerErrorCode"] == "403")
+        #expect(error.details["providerErrorStatus"] == nil)
+        #expect(error.details["providerErrorMessage"] == nil)
+        #expect(error.details["providerErrorReason"] == nil)
         #expect(error.details["body"] == nil)
+    }
+
+    @Test func providerErrorDetailsNeverEchoKnownSecretValuesFromAnyField() throws {
+        let secrets = ["access-token-value", "refresh-token-value", "client-secret-value"]
+        TestGmailRequestCaptureProtocol.reset()
+        TestGmailRequestCaptureProtocol.responseStatusCode = 400
+        TestGmailRequestCaptureProtocol.responseData = Data("""
+        {
+          "error": {
+            "code": 400,
+            "message": "\(secrets[0])",
+            "status": "\(secrets[1])",
+            "errors": [{ "reason": "\(secrets[2])", "message": "\(secrets[0])" }]
+          }
+        }
+        """.utf8)
+        URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
+        defer {
+            URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
+            TestGmailRequestCaptureProtocol.reset()
+        }
+
+        let request = URLRequest(url: URL(string: "https://gmail.googleapis.com/test")!)
+        let error = try requireGmailGatewayError {
+            _ = try performGmailHTTPRequest(request, context: "Gmail request failed")
+        }
+
+        let output = [error.message] + error.details.map { "\($0.key)=\($0.value)" }
+        for secret in secrets {
+            #expect(!output.joined(separator: " ").contains(secret))
+        }
     }
 
     @Test func idempotentGmailGetRetriesRateLimitAndServerErrors() throws {

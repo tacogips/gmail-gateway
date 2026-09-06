@@ -17,12 +17,16 @@ let package = Package(
     .executable(name: "gmail-gateway-swift-smoke-tests", targets: ["GmailGatewaySwiftSmokeTests"])
   ],
   dependencies: [
-    .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0")
+    .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0"),
+    .package(url: "https://github.com/tacogips/google-service-gateway.git", exact: "0.1.1")
   ],
   targets: [
     .target(
       name: "GmailGatewayCore",
-      dependencies: [.product(name: "GatewaySDKKit", package: "gateway-sdk-kit")]
+      dependencies: [
+        .product(name: "GatewaySDKKit", package: "gateway-sdk-kit"),
+        .product(name: "GoogleServiceGatewayCore", package: "google-service-gateway")
+      ]
     ),
     .executableTarget(
       name: "GmailGatewayReader",
@@ -50,7 +54,11 @@ let package = Package(
     ),
     .testTarget(
       name: "GmailGatewayCoreTests",
-      dependencies: ["GmailGatewayCore"]
+      dependencies: [
+        "GmailGatewayCore",
+        .product(name: "GatewaySDKKit", package: "gateway-sdk-kit"),
+        .product(name: "GoogleServiceGatewayCore", package: "google-service-gateway")
+      ]
     )
   ],
   swiftLanguageModes: [.v6]

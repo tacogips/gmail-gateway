@@ -1,5 +1,5 @@
 import Foundation
-import GmailGatewayCore
+@_spi(Testing) import GmailGatewayCore
 
 func runSmokeTests() throws {
     var cleanup: [String] = []
@@ -11,6 +11,7 @@ func runSmokeTests() throws {
 
     try testRelativeConfig(cleanup: &cleanup)
     try testHelpOutput()
+    try testPersistentAuthHelpSnapshots()
     try testCredentialEnvFallback(cleanup: &cleanup)
     try testCredentialEnvOverride(cleanup: &cleanup)
     try testPrettyConfigValidation(cleanup: &cleanup)
@@ -234,6 +235,7 @@ func testRevokeMissingToken(cleanup: inout [String]) throws {
 
 func testInvalidAuthLoginClientSecret(cleanup: inout [String]) throws {
     let fixture = try trackedFixture(cleanup: &cleanup)
+    try writeText(fixture.clientSecretPath, "{\"installed\":true}\n")
     let result = runCli(["auth", "login", "--config", fixture.configPath, "--credential", "gmail-personal"])
     try assert(result.exitCode == GmailGatewayExitCode.authenticationBootstrapError.rawValue, "invalid login should fail")
     let output = try decodeObject(result.stderr)
@@ -400,7 +402,40 @@ func capturedGmailQueryItems(at index: Int) -> [URLQueryItem] {
     return components.queryItems ?? []
 }
 
+func runPersistentLifecycleLockFixtureIfRequested() throws -> Bool {
+    let environment = ProcessInfo.processInfo.environment
+    guard let credentialID = environment["GMAIL_GATEWAY_LOCK_FIXTURE_CREDENTIAL"],
+          let mode = environment["GMAIL_GATEWAY_LOCK_FIXTURE_MODE"] else {
+        return false
+    }
+    try withGmailPersistentCredentialLifecycleLockForTesting(
+        credentialID: credentialID,
+        accessMode: .read,
+        lockDirectoryPath: environment["GMAIL_GATEWAY_LOCK_FIXTURE_DIRECTORY"],
+        lifecycleLockEvent: { event in
+            guard event == .contended,
+                  let attemptPath = environment["GMAIL_GATEWAY_LOCK_FIXTURE_ATTEMPT_PATH"] else {
+                return
+            }
+            _ = FileManager.default.createFile(atPath: attemptPath, contents: Data([1]))
+        },
+        operation: {
+            guard let signalPath = environment["GMAIL_GATEWAY_LOCK_FIXTURE_SIGNAL_PATH"],
+                  FileManager.default.createFile(atPath: signalPath, contents: Data([1])) else {
+                throw POSIXError(.EIO)
+            }
+            if mode == "holder" {
+                _ = FileHandle.standardInput.availableData
+            }
+        }
+    )
+    return true
+}
+
 do {
+    if try runPersistentLifecycleLockFixtureIfRequested() {
+        exit(0)
+    }
     try runSmokeTests()
     print("GmailGateway Swift smoke tests passed")
 } catch {

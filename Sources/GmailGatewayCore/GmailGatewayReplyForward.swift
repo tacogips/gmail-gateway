@@ -162,6 +162,35 @@ func plannedReplyMail(input: ReplyMessageInput, original: MailMessage, accountEm
     )
 }
 
+func validateReplyInputBeforeProvider(
+    _ input: ReplyMessageInput,
+    account: AccountConfig,
+    operation: GmailGatewayWriteOperation
+) throws {
+    if nonBlank(input.textBody) == nil && nonBlank(input.htmlBody) == nil {
+        throw GmailGatewayError(
+            "\(operation.mutationName) requires textBody or htmlBody",
+            code: .invalidArgument,
+            exitCode: .graphqlExecutionError
+        )
+    }
+    let explicitRecipients = input.to + input.cc + input.bcc
+    if explicitRecipients.contains(where: { nonBlank($0) == nil }) {
+        throw GmailGatewayError(
+            "\(operation.mutationName) recipient values must not be blank",
+            code: .invalidArgument,
+            exitCode: .graphqlExecutionError
+        )
+    }
+    for value in [account.emailAddress] + explicitRecipients where containsHeaderLineBreak(value) {
+        throw GmailGatewayError(
+            "\(operation.mutationName) header values must not contain line breaks",
+            code: .invalidArgument,
+            exitCode: .graphqlExecutionError
+        )
+    }
+}
+
 func plannedForwardMail(
     input: ForwardMessageInput,
     original: MailMessage,

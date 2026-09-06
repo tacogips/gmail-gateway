@@ -22,6 +22,20 @@ import Testing
     #expect(result.stdout.contains("gmail-gateway-sender"))
 }
 
+@Test func persistentAuthHelpDescribesStoredLoopbackRedirectSemanticsForAllExecutables() {
+    let results = [
+        GmailGatewayCLI().run(arguments: ["--help"], environment: [:]),
+        GmailGatewayCLI(mode: .draftGateway).run(arguments: ["--help"], environment: [:]),
+        GmailGatewayCLI(mode: .directSender).run(arguments: ["--help"], environment: [:])
+    ]
+
+    for result in results {
+        #expect(result.stdout.contains("127.0.0.1, ::1, or localhost"))
+        #expect(result.stdout.contains("first stored redirect"))
+        #expect(result.stdout.contains("portless URI gets a"))
+    }
+}
+
 @Test func versionFlagReturnsVersionForAllBinaries() throws {
     let versionFile = try String(contentsOfFile: "VERSION", encoding: .utf8)
     let expected = try #require(nonBlank(versionFile)) + "\n"
@@ -32,7 +46,7 @@ import Testing
 }
 
 @Test func embeddedVersionDoesNotDependOnAWorkingDirectoryVersionFile() {
-    #expect(gmailGatewayVersion() == "0.1.11")
+    #expect(gmailGatewayVersion() == "0.1.12")
 }
 
 @Test func tokenRefreshOAuthClientUsesConfiguredTokenURIAndAllowsPublicClient() throws {
@@ -131,8 +145,9 @@ import Testing
         {
           "installed": {
             "client_id": "client-id",
-            "auth_uri": "https://accounts.example.test/o/oauth2/auth",
-            "token_uri": "https://tokens.example.test/token"
+            "auth_uri": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["http://127.0.0.1:8080/oauth2callback"]
           }
         }
         """)
@@ -172,6 +187,31 @@ import Testing
     #expect(try resultBox.result?.get() == "auth-code")
 }
 
+@Test func loopbackOAuthReceiverRejectsForgedErrorOnlyAfterStateValidation() throws {
+    let receiver = try LoopbackOAuthReceiver()
+    let resultBox = OAuthCallbackResultBox()
+    let semaphore = DispatchSemaphore(value: 0)
+    let sentinel = "forged-oauth-error-sentinel"
+
+    DispatchQueue.global(qos: .userInitiated).async {
+        resultBox.result = Result {
+            try receiver.waitForCode(expectedState: "expected-state", timeoutSeconds: 5)
+        }
+        semaphore.signal()
+    }
+
+    let response = try sendRawHTTPRequest(to: receiver.redirectURI + "?state=forged-state&error=\(sentinel)")
+    #expect(response.contains("HTTP/1.1 400 Bad Request"))
+    #expect(semaphore.wait(timeout: .now() + .seconds(5)) == .success)
+    let error = try requireGmailGatewayError {
+        _ = try resultBox.result?.get()
+    }
+    #expect(error.code == .authRequired)
+    #expect(error.exitCode == .authenticationBootstrapError)
+    #expect(!error.message.contains(sentinel))
+    #expect(error.details.values.allSatisfy { !$0.contains(sentinel) })
+}
+
 @Test func loopbackOAuthReceiverIgnoresWrongPathBeforeCallback() throws {
     let receiver = try LoopbackOAuthReceiver()
     let resultBox = OAuthCallbackResultBox()
@@ -196,11 +236,57 @@ import Testing
     #expect(try resultBox.result?.get() == "auth-code")
 }
 
-@Test func loopbackOAuthReceiverRewritesLocalhostRedirectURIToIPv4() throws {
+@Test func loopbackOAuthReceiverPreservesExplicitLocalhostRedirectURI() throws {
     let port = try reserveFreeLoopbackPort()
     let receiver = try LoopbackOAuthReceiver(redirectURI: "http://localhost:\(port)/callback")
 
-    #expect(receiver.redirectURI == "http://127.0.0.1:\(port)/callback")
+    #expect(receiver.redirectURI == "http://localhost:\(port)/callback")
+}
+
+@Test func loopbackOAuthReceiverAcceptsIPv6LoopbackRedirectURI() throws {
+    let receiver = try LoopbackOAuthReceiver(redirectURI: "http://[::1]/oauth2callback")
+    let components = try #require(URLComponents(string: receiver.redirectURI))
+
+    #expect(components.host == "[::1]")
+    #expect(components.port != nil)
+    #expect(components.path == "/oauth2callback")
+}
+
+@Test func localhostReceiverBindsInjectedLoopbackFamiliesOnOneAdvertisedPort() throws {
+    func receiveCallback(over host: String) throws {
+        let receiver = try LoopbackOAuthReceiver(
+            redirectURI: "http://localhost/oauth2callback",
+            localhostAddressResolver: { ["127.0.0.1", "::1"] }
+        )
+        let advertised = try #require(URLComponents(string: receiver.redirectURI))
+        let port = try #require(advertised.port)
+        let resultBox = OAuthCallbackResultBox()
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            resultBox.result = Result {
+                try receiver.waitForCode(expectedState: "state-value", timeoutSeconds: 5)
+            }
+            semaphore.signal()
+        }
+        let url = host == "::1"
+            ? "http://[::1]:\(port)/oauth2callback?state=state-value&code=auth-code"
+            : "http://127.0.0.1:\(port)/oauth2callback?state=state-value&code=auth-code"
+        #expect(try sendRawHTTPRequest(to: url).contains("HTTP/1.1 200 OK"))
+        #expect(semaphore.wait(timeout: .now() + .seconds(5)) == .success)
+        #expect(try resultBox.result?.get() == "auth-code")
+    }
+
+    try receiveCallback(over: "127.0.0.1")
+    try receiveCallback(over: "::1")
+}
+
+@Test func localhostReceiverRejectsInjectedNonLoopbackResolutionBeforeListening() {
+    #expect(throws: GmailGatewayError.self) {
+        _ = try LoopbackOAuthReceiver(
+            redirectURI: "http://localhost/oauth2callback",
+            localhostAddressResolver: { ["127.0.0.1", "203.0.113.10"] }
+        )
+    }
 }
 
 @Test func base64URLDecoderRejectsStandardBase64Alphabet() throws {
@@ -712,7 +798,8 @@ private func sendRawHTTPRequest(to urlString: String) throws -> String {
           let port = components.port else {
         throw ExpectedGmailGatewayError(description: "Invalid callback URL: \(urlString)")
     }
-    let socketFD = socket(AF_INET, SOCK_STREAM, 0)
+    let isIPv6 = host == "[::1]" || host == "::1"
+    let socketFD = socket(isIPv6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0)
     guard socketFD >= 0 else {
         throw ExpectedGmailGatewayError(description: "Failed to create callback test socket")
     }
@@ -720,14 +807,30 @@ private func sendRawHTTPRequest(to urlString: String) throws -> String {
         close(socketFD)
     }
 
-    var address = sockaddr_in()
-    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-    address.sin_family = sa_family_t(AF_INET)
-    address.sin_port = in_port_t(port).bigEndian
-    address.sin_addr = in_addr(s_addr: inet_addr(host))
-    let connectResult = withUnsafePointer(to: &address) { pointer in
-        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-            Darwin.connect(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
+    let connectResult: Int32
+    if isIPv6 {
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_port = in_port_t(port).bigEndian
+        guard inet_pton(AF_INET6, "::1", &address.sin6_addr) == 1 else {
+            throw ExpectedGmailGatewayError(description: "Failed to encode IPv6 callback address")
+        }
+        connectResult = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                Darwin.connect(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in6>.size))
+            }
+        }
+    } else {
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(port).bigEndian
+        address.sin_addr = in_addr(s_addr: inet_addr(host))
+        connectResult = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                Darwin.connect(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
         }
     }
     guard connectResult == 0 else {
