@@ -83,7 +83,6 @@ render_formula() {
 class $class < Formula
   desc "$desc"
   homepage "https://github.com/tacogips/gmail-gateway"
-  version "$version"
   license "MIT"
 
   livecheck do
