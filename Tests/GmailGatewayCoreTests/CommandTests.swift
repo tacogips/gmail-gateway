@@ -46,7 +46,7 @@ import Testing
 }
 
 @Test func embeddedVersionDoesNotDependOnAWorkingDirectoryVersionFile() {
-    #expect(gmailGatewayVersion() == "0.1.13")
+    #expect(gmailGatewayVersion() == "0.1.14")
 }
 
 @Test func tokenRefreshOAuthClientUsesConfiguredTokenURIAndAllowsPublicClient() throws {

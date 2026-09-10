@@ -60,6 +60,7 @@ struct GmailOAuthBootstrapper {
     }
 
     func login(credential: CredentialConfig, options: GmailOAuthLoginOptions = GmailOAuthLoginOptions()) throws -> [String: Any] {
+        try migrateGmailDefaultTokenStore(credential)
         let result = try loginResult(credential: credential, options: options)
         try writeGmailOAuthTokenStore(
             result.tokenStore,

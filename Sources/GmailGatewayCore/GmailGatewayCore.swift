@@ -173,6 +173,7 @@ public struct CredentialConfig: Sendable {
     public let tokenStoreJSON: String?
     let oauthClientSecretSource: GmailCredentialSourceKind
     let tokenStoreSource: GmailCredentialSourceKind
+    let legacyDefaultTokenStorePath: String?
 
     init(
         id: String,
@@ -183,7 +184,8 @@ public struct CredentialConfig: Sendable {
         tokenStorePath: String,
         tokenStoreJSON: String?,
         oauthClientSecretSource: GmailCredentialSourceKind = .configuredPath,
-        tokenStoreSource: GmailCredentialSourceKind = .configuredPath
+        tokenStoreSource: GmailCredentialSourceKind = .configuredPath,
+        legacyDefaultTokenStorePath: String? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -194,6 +196,7 @@ public struct CredentialConfig: Sendable {
         self.tokenStoreJSON = tokenStoreJSON
         self.oauthClientSecretSource = oauthClientSecretSource
         self.tokenStoreSource = tokenStoreSource
+        self.legacyDefaultTokenStorePath = legacyDefaultTokenStorePath
     }
 }
 
@@ -391,6 +394,7 @@ public struct GmailGatewayService {
 
     public func getAuthStatus(credentialId: String) throws -> [String: Any] {
         let credential = try requireCredential(credentialId)
+        try migrateGmailDefaultTokenStore(credential)
         let tokenState = inspectTokenStore(credential: credential)
         return [
             "credentialId": credential.id,
@@ -407,20 +411,19 @@ public struct GmailGatewayService {
 
     public func revokeAuth(credentialId: String) throws -> [String: Any] {
         let credential = try requireCredential(credentialId)
-        let existed = FileManager.default.fileExists(atPath: credential.tokenStorePath)
-        if existed {
-            do {
-                try FileManager.default.removeItem(atPath: credential.tokenStorePath)
-            } catch {
-                throw GmailGatewayError(
-                    "Failed to revoke token store for credential \(credential.id)",
-                    code: .authRequired,
-                    exitCode: .authenticationBootstrapError,
-                    details: ["cause": error.localizedDescription]
-                )
-            }
+        guard credential.tokenStoreJSON == nil else {
+            throw GmailGatewayError("Inline token JSON is immutable; remove the environment override to revoke it",
+                                    code: .invalidArgument, exitCode: .invalidCliUsage)
         }
-        return ["credentialId": credentialId, "revoked": existed]
+        try migrateGmailDefaultTokenStore(credential)
+        let selected = try readPersistentTokenFileData(
+            credential.tokenStorePath, credential: credential, exitCode: .authenticationBootstrapError
+        )
+        if let selected {
+            try removePersistentTokenFile(at: credential.tokenStorePath, expectedState: .identity(selected.identity),
+                                          credential: credential, exitCode: .authenticationBootstrapError)
+        }
+        return ["credentialId": credentialId, "revoked": selected != nil]
     }
 
     public func login(credentialId: String) throws -> [String: Any] {

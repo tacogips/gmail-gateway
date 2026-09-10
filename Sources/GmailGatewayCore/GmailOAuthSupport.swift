@@ -536,6 +536,7 @@ private func loadGmailOAuthTokenStore(
     credential: CredentialConfig,
     missingAuthMessage: String
 ) throws -> GmailOAuthTokenStore {
+    try migrateGmailDefaultTokenStore(credential)
     do {
         let data: Data
         if let tokenStoreJSON = credential.tokenStoreJSON {

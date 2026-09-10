@@ -65,7 +65,7 @@ public enum GmailGatewayConfigLoader {
         if let credentialDir = nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) {
             return normalizedPath(credentialDir)
         }
-        let stateRoot = nonBlank(environment["XDG_STATE_HOME"])
+        let stateRoot = nonBlank(environment["XDG_STATE_HOME"]).flatMap { $0.hasPrefix("/") ? $0 : nil }
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".local")
                 .appendingPathComponent("state")
@@ -79,7 +79,7 @@ public enum GmailGatewayConfigLoader {
     public static func resolveDefaultConfigPath(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String {
-        if let xdgConfigHome = nonBlank(environment["XDG_CONFIG_HOME"]) {
+        if let xdgConfigHome = nonBlank(environment["XDG_CONFIG_HOME"]), xdgConfigHome.hasPrefix("/") {
             return normalizedPath(URL(fileURLWithPath: xdgConfigHome)
                 .appendingPathComponent("gmail-gateway")
                 .appendingPathComponent("config.toml")
@@ -277,7 +277,9 @@ public enum GmailGatewayConfigLoader {
                 credentialId: defaultCredentialId,
                 pathKey: "token_store_path"
             )]) != nil ? .environmentPath :
-                (nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) == nil ? .synthesizedDefault : .relocatedPath)
+                (nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) == nil ? .synthesizedDefault : .relocatedPath),
+            legacyDefaultTokenStorePath: URL(fileURLWithPath: configPath).deletingLastPathComponent()
+                .appendingPathComponent("tokens/\(defaultCredentialId).json").path
         )
         return GmailGatewayConfig(
             configPath: configPath,

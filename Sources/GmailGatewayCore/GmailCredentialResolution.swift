@@ -113,13 +113,15 @@ struct GmailAuthResolver: Sendable {
         case .secureVault:
             return nil
         case .synthesizedDefault:
-            if let profile = try await vault.profile(credentialId: credential.id, accessMode: credential.accessMode),
+            let profile = try await vault.profile(credentialId: credential.id, accessMode: credential.accessMode)
+            if let profile,
                let token = profile.token {
                 return GmailResolvedToken(
                     source: ResolvedCredentialSource(value: token, kind: .secureVault, writable: true),
                     destination: .vault(profile)
                 )
             }
+            if profile == nil { try migrateGmailDefaultTokenStore(credential) }
             guard let data = try readPersistentTokenFileData(
                 credential.tokenStorePath, credential: credential, exitCode: .graphqlExecutionError
             ) else { return nil }
@@ -163,6 +165,7 @@ struct GmailAuthResolver: Sendable {
             if let profile, profile.token != nil {
                 return try vaultDestination(profile, client: client, credential: credential)
             }
+            if profile == nil { try migrateGmailDefaultTokenStore(credential) }
             if try readPersistentTokenFileData(credential.tokenStorePath, credential: credential, exitCode: .authenticationBootstrapError) != nil {
                 let identity = try validateExistingFileToken(for: credential, at: credential.tokenStorePath, client: client)
                 return .file(credential.tokenStorePath, identity.map(PersistentTokenFileExpectedState.identity) ?? .absent)

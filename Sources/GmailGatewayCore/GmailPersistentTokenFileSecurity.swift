@@ -131,7 +131,9 @@ func preparePersistentTokenFileParent(
 func readPersistentTokenFileData(
     _ path: String,
     credential: CredentialConfig,
-    exitCode: GmailGatewayExitCode
+    exitCode: GmailGatewayExitCode,
+    requireOwnedSingleLink: Bool = false,
+    makePrivate: Bool = false
 ) throws -> PersistentTokenFileRead? {
     try validatePersistentTokenFilePath(path, credential: credential, exitCode: exitCode)
     let directory = URL(fileURLWithPath: path).deletingLastPathComponent().path
@@ -145,7 +147,7 @@ func readPersistentTokenFileData(
         createMissing: false,
         requirePrivateParent: false
     )
-    let descriptor = openat(parent.descriptor, parent.leaf, O_RDONLY | O_NOFOLLOW)
+    let descriptor = openat(parent.descriptor, parent.leaf, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
     if descriptor < 0 {
         if errno == ENOENT { return nil }
         throw persistentTokenPathError("selected token source is unreadable", path: path, credential: credential, exitCode: exitCode)
@@ -153,8 +155,15 @@ func readPersistentTokenFileData(
     defer { _ = close(descriptor) }
     var metadata = stat()
     guard fstat(descriptor, &metadata) == 0,
-          (metadata.st_mode & S_IFMT) == S_IFREG else {
+          (metadata.st_mode & S_IFMT) == S_IFREG,
+          !requireOwnedSingleLink || (metadata.st_uid == geteuid() && metadata.st_nlink == 1) else {
         throw persistentTokenPathError("selected token source is unreadable", path: path, credential: credential, exitCode: exitCode)
+    }
+    if makePrivate {
+        guard metadata.st_uid == geteuid(), metadata.st_nlink == 1,
+              fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+            throw persistentTokenPathError("token file must be private (0600)", path: path, credential: credential, exitCode: exitCode)
+        }
     }
     do {
         var data = Data()
@@ -169,6 +178,26 @@ func readPersistentTokenFileData(
     } catch {
         throw persistentTokenPathError("selected token source is unreadable", path: path, credential: credential, exitCode: exitCode)
     }
+}
+
+/// Serializes migration across processes without following a substituted lock file.
+func withGmailTokenMigrationLock<T>(credential: CredentialConfig, operation: () throws -> T) throws -> T {
+    let path = credential.tokenStorePath + ".migration.lock"
+    let parent = try openPersistentTokenParent(
+        path, credential: credential, exitCode: .authenticationBootstrapError,
+        createMissing: true, requirePrivateParent: true
+    )
+    let descriptor = openat(parent.descriptor, parent.leaf, O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK, S_IRUSR | S_IWUSR)
+    guard descriptor >= 0 else { throw POSIXError(.EACCES) }
+    defer { _ = close(descriptor) }
+    var metadata = stat()
+    guard fstat(descriptor, &metadata) == 0, metadata.st_uid == geteuid(), metadata.st_nlink == 1,
+          (metadata.st_mode & S_IFMT) == S_IFREG,
+          fchmod(descriptor, S_IRUSR | S_IWUSR) == 0, flock(descriptor, LOCK_EX) == 0 else {
+        throw POSIXError(.EACCES)
+    }
+    defer { _ = flock(descriptor, LOCK_UN) }
+    return try operation()
 }
 
 /// Completes or cleans the durable, descriptor-relative transaction left by an

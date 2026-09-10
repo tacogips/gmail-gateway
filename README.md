@@ -1,5 +1,24 @@
 # gmail-gateway
 
+### OAuth token state and legacy migration
+
+File-backed default tokens live at `${XDG_STATE_HOME:-~/.local/state}/gmail-gateway/credentials/<profile>.json`.
+Configuration stays at `${XDG_CONFIG_HOME:-~/.config}/gmail-gateway/config.toml`.
+Empty or relative XDG base-directory values are ignored. Explicit token paths,
+`GMAIL_GATEWAY_CREDENTIAL_DIR`, inline JSON, and secure-vault credentials retain their existing precedence and location.
+
+For the historical no-config `gmail-personal` profile only, the former
+`<config-directory>/tokens/gmail-personal.json` is copied securely to the state
+default when no state token exists. An existing state token always wins.
+The old file is retained as a recovery copy, never refreshed there. A durable
+`.migration-complete` marker prevents it being reactivated after revoke or restart;
+do not delete that marker while retaining an old recovery copy. No explicit path
+is migrated, and vault-backed profiles do not trigger migration.
+New token and migration files use `0600`, and token directories use `0700`.
+Migration rejects linked, non-regular, or foreign-owned files and unsafe parent paths.
+If migration fails, it reports both paths without exposing token values; the old
+file remains available for deliberate recovery. Configuration loading alone never migrates files.
+
 Swift command-line gateway for Gmail workflows
 
 ## Development
