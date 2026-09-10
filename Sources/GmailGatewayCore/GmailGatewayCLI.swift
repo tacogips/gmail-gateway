@@ -780,7 +780,9 @@ private func persistentGraphQLEnvironment(
         return environment
     }
     var effectiveEnvironment = environment
-    effectiveEnvironment["GMAIL_GATEWAY_CONFIG"] = config.configPath
+    if !config.accounts.contains(where: { $0.isFallback }) {
+        effectiveEnvironment["GMAIL_GATEWAY_CONFIG"] = config.configPath
+    }
     for credential in config.credentials {
         if let clientJSON = credential.oauthClientSecretJSON {
             effectiveEnvironment[GmailGatewayConfigLoader.getCredentialJSONEnvVarName(

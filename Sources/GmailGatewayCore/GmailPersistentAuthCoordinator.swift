@@ -272,7 +272,7 @@ struct GmailAuthCoordinator: Sendable {
             "emailAddress": token?.emailAddress as Any? ?? NSNull(),
             "persistentClientExists": profile != nil,
             "persistentTokenExists": profile?.token != nil
-        ]
+        ].merging(tokenSourceDiagnostics(credential, source: tokenSource)) { current, _ in current }
     }
 
     func revoke(credentialId: String, confirmedCredentialId: String?) async throws -> [String: Any] {
@@ -433,7 +433,10 @@ struct GmailAuthCoordinator: Sendable {
             "expiresAt": token.expiresAt as Any? ?? NSNull(),
             "hasRefreshToken": true,
             "persistenceBackend": destination.persistenceBackend
-        ]
+        ].merging(tokenSourceDiagnostics(
+            credential,
+            source: destination.persistenceBackend == "KEYCHAIN" ? .secureVault : resolver().tokenSourceKind(for: credential)
+        )) { current, _ in current }
     }
 
     func hydratedConfig(credentialIds: Set<String>? = nil) async throws -> GmailGatewayConfig {
@@ -464,7 +467,7 @@ struct GmailAuthCoordinator: Sendable {
                         details: ["credentialId": credential.id]
                     )
                 }
-                try validatePersistentToken(token.source.value, client: client.value, credential: credential, accounts: config.accounts)
+                try validateResolvedToken(token.source.value, source: token.source.kind, client: client.value, credential: credential)
                 let resolvedToken: GmailOAuthTokenStore
                 if gmailAccessTokenIsFresh(expiresAt: token.source.value.expiresAt) {
                     resolvedToken = token.source.value
@@ -474,7 +477,7 @@ struct GmailAuthCoordinator: Sendable {
                         credential.replacingOAuthClientJSON(try client.value.legacyJSON()),
                         token.source.value
                     )
-                    try validatePersistentToken(resolvedToken, client: client.value, credential: credential, accounts: config.accounts)
+                    try validateResolvedToken(resolvedToken, source: token.source.kind, client: client.value, credential: credential)
                     try await persistPersistentToken(resolvedToken, destination: token.destination)
                 }
                 return credential
@@ -493,6 +496,25 @@ struct GmailAuthCoordinator: Sendable {
         return credential
     }
 
+    private func validateResolvedToken(
+        _ token: GmailOAuthTokenStore,
+        source: GmailCredentialSourceKind,
+        client: GmailOAuthClientRecord,
+        credential: CredentialConfig
+    ) throws {
+        do {
+            try validatePersistentToken(token, client: client, credential: credential, accounts: config.accounts)
+        } catch let error as GmailGatewayError {
+            throw tokenSourceError(
+                GmailGatewayError(
+                    error.message, code: error.code, exitCode: error.exitCode,
+                    details: ["tokenSource": source.rawValue]
+                ),
+                credential: credential
+            )
+        }
+    }
+
     private func resolver() -> GmailAuthResolver {
         GmailAuthResolver(config: config, environment: environment, policy: policy, vault: vault)
     }
@@ -501,11 +523,15 @@ struct GmailAuthCoordinator: Sendable {
         _ credential: CredentialConfig,
         operation: () async throws -> T
     ) async throws -> T {
-        try await withPersistentCredentialLifecycleLock(
-            credential: credential,
-            lifecycleLockEvent: lifecycleLockEvent,
-            operation: operation
-        )
+        do {
+            return try await withPersistentCredentialLifecycleLock(
+                credential: credential,
+                lifecycleLockEvent: lifecycleLockEvent,
+                operation: operation
+            )
+        } catch let error as GmailGatewayError {
+            throw tokenSourceError(error, credential: credential)
+        }
     }
 
     private func recoverPersistentTokenTransactionIfNeeded(_ credential: CredentialConfig) async throws {

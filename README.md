@@ -212,6 +212,15 @@ not expose `auth setup`. For a Keychain-only TOML credential, omit both
 `oauth_client_secret_path` and `token_store_path`; omitted paths are synthesized
 fallbacks, so the persistent profile is selected first.
 
+The implicit configuration also works for GraphQL reads after login. Token
+selection prefers credential `TOKEN_STORE_JSON` environment overrides, then
+`TOKEN_STORE_PATH` overrides, then configured paths. An explicit `--config`
+does not override these credential environment variables. Inline token JSON is
+immutable: unset its exact variable before logging in. Login output reports
+`tokenSource`, `tokenStorePath` for file storage, and `tokenSourceHint` describing
+how subsequent commands can select the written token. Authentication errors
+include this source information and the selected override variable name.
+
 **Permanent delete requires `full`.** `deleteThread`, `deleteMessage`, and
 `batchDeleteMessages` are irreversible, bypass Trash, and cannot be undone; Gmail accepts
 only its full-access scope for them. Prefer `trashThread` and `trashMessage`, which are
