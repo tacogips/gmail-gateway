@@ -19,7 +19,7 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/tacogips/google-gateway-auth.git", revision: "2951cd8829d94d0b16e2a3bfdca301e57bb1f862"),
     .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0"),
-    .package(url: "https://github.com/tacogips/google-service-gateway.git", revision: "e2d11843fd5afa6065ec438f8d2a0149c88f4aed")
+    .package(url: "https://github.com/tacogips/google-service-gateway.git", revision: "f40f11aed5ca17f497d0bde7eddb77db0c084fc3")
   ],
   targets: [
     .target(
