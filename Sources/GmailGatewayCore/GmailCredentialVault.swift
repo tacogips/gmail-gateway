@@ -165,8 +165,8 @@ private func normalizedVaultProfile(_ profile: GmailCredentialProfileEnvelope) t
           profile.expectedScopes == gmailScopes(accessMode: profile.accessMode).sorted() else {
         throw vaultError("persistent profile identity is invalid")
     }
-    guard profile.client.kind == "installed" else {
-        throw vaultError("stored OAuth client is not an installed desktop client")
+    guard ["installed", "web"].contains(profile.client.kind) else {
+        throw vaultError("stored OAuth client has an unsupported application type")
     }
     let normalizedClient: GmailOAuthClientRecord
     do {

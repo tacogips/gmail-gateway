@@ -1,4 +1,5 @@
 import Foundation
+import GoogleGatewayAuth
 
 struct GmailOAuthClientRecord: Codable, Sendable, Equatable {
     let kind: String
@@ -18,7 +19,7 @@ struct GmailOAuthClientRecord: Codable, Sendable, Equatable {
         ]
         if let clientSecret { installed["client_secret"] = clientSecret }
         if let projectId { installed["project_id"] = projectId }
-        let data = try JSONSerialization.data(withJSONObject: ["installed": installed], options: [.sortedKeys])
+        let data = try JSONSerialization.data(withJSONObject: [kind: installed], options: [.sortedKeys])
         guard let json = String(data: data, encoding: .utf8) else {
             throw profileError("OAuth client could not be encoded")
         }
@@ -42,7 +43,8 @@ func loadGmailOAuthClientRecord(from path: String) throws -> GmailOAuthClientRec
 func loadGmailOAuthClientRecord(from data: Data) throws -> GmailOAuthClientRecord {
     do {
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let installed = root?["installed"] as? [String: Any], root?["web"] == nil else {
+        guard (root?["installed"] == nil) != (root?["web"] == nil),
+              let installed = (root?["installed"] ?? root?["web"]) as? [String: Any] else {
             throw profileError("OAuth client JSON must contain only an installed desktop client")
         }
         guard let clientID = nonBlank(installed["client_id"] as? String),
@@ -55,9 +57,14 @@ func loadGmailOAuthClientRecord(from data: Data) throws -> GmailOAuthClientRecor
         try validateEndpoint(tokenEndpoint, expectedPath: "/token")
         // OAuth client registration order is meaningful for the default callback.
         // Validate every value without changing the order supplied by Google.
-        let normalizedRedirects = try redirects.map { try GmailLoopbackRedirectURI($0).registeredURI }
+        let kind = root?["web"] == nil ? "installed" : "web"
+        if kind == "web", nonBlank(installed["client_secret"] as? String) == nil { throw profileError("Web OAuth client requires a client secret") }
+        let normalizedRedirects = try redirects.map { value in
+            if kind == "web" { return try OAuthCallbackSettings.validatedRedirect(value).absoluteString }
+            return try GmailLoopbackRedirectURI(value).registeredURI
+        }
         return GmailOAuthClientRecord(
-            kind: "installed",
+            kind: kind,
             clientId: clientID,
             clientSecret: nonBlank(installed["client_secret"] as? String),
             projectId: nonBlank(installed["project_id"] as? String),

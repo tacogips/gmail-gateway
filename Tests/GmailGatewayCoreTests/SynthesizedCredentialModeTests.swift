@@ -35,6 +35,23 @@ final class SynthesizedCredentialModeTests: XCTestCase {
         }
     }
 
+    func testGraphQLResolverRetainsImplicitExecutableAccessMode() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for mode in [GmailGatewayCLIMode.reader, .draftGateway, .mailboxThreads, .messageBox] {
+            let result = await GmailGatewayGraphQLExecutor().run(
+                query: "{ accounts { capabilities { configuredAccessMode } } }",
+                mode: mode, environment: defaultModeEnvironment(root), configurationPolicy: .cliDefaults
+            )
+            let data = try JSONEncoder().encode(result)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let payload = try XCTUnwrap(object["data"] as? [String: Any])
+            let accounts = try XCTUnwrap(payload["accounts"] as? [[String: Any]])
+            let capabilities = try XCTUnwrap(accounts.first?["capabilities"] as? [String: Any])
+            XCTAssertEqual(capabilities["configuredAccessMode"] as? String, mode.synthesizedAccessMode.graphQLValue)
+        }
+    }
+
     func testExplicitConfigurationKeepsItsAccessMode() async throws {
         let configURL = try makeVaultOnlyConfig(accessMode: .read)
         defer { try? FileManager.default.removeItem(at: configURL.deletingLastPathComponent()) }

@@ -24,6 +24,7 @@ public struct GmailGatewayGraphQLExecutor: Sendable {
             let requestId = UUID().uuidString
             var baseUserInfo: [String: GatewayJSONValue] = [
                 "sendEnabled": .bool(mode.gatewaySendEnabled),
+                "gmailGateway.synthesizedAccessMode": .string(mode.synthesizedAccessMode.rawValue),
                 "gmailGateway.configurationPolicy": .string(configurationPolicy.rawValue)
             ]
             let preflightContext = GatewayResolverContext(

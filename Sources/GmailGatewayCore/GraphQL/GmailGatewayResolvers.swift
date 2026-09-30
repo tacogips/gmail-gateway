@@ -104,10 +104,18 @@ private func config(_ context: GatewayResolverContext) throws -> GmailGatewayCon
     } else {
         policy = .strictEnvironment
     }
+    let accessMode: AccessMode
+    if case .string(let rawValue) = context.userInfo["gmailGateway.synthesizedAccessMode"],
+       let configured = AccessMode(rawValue: rawValue) {
+        accessMode = configured
+    } else {
+        accessMode = .read
+    }
     return try GmailGatewayConfigLoader.loadConfig(
         configPath: context.environment["GMAIL_GATEWAY_CONFIG"],
         environment: context.environment,
-        policy: policy
+        policy: policy,
+        synthesizedAccessMode: accessMode
     )
 }
 

@@ -83,7 +83,7 @@ final class PersistentAuthLifecycleMatrixTests: XCTestCase {
             )
             let profileAfterRevoke = try await vault.profile(credentialId: "gmail-personal", accessMode: accessMode)
 
-            XCTAssertEqual(login["persistenceBackend"] as? String, "KEYCHAIN", "\(mode)")
+            XCTAssertEqual(login["persistenceBackend"] as? String, "CUSTOM", "\(mode)")
             XCTAssertEqual(status["tokenState"] as? String, AuthState.ready.rawValue, "\(mode)")
             XCTAssertEqual(renderedStatus.exitCode, GmailGatewayExitCode.success.rawValue, "\(mode)")
             XCTAssertFalse(renderedStatus.stdout.contains(client.clientSecret ?? "client-secret"), "\(mode)")

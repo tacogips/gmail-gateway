@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import GoogleGatewayAuth
 import Security
 
 struct GmailOAuthLoginOptions: Sendable {
@@ -87,6 +88,11 @@ struct GmailOAuthBootstrapper {
         credential: CredentialConfig,
         options: GmailOAuthLoginOptions = GmailOAuthLoginOptions()
     ) throws -> GmailOAuthLoginResult {
+        do { return try performLoginResult(credential: credential, options: options) }
+        catch let error as GatewayAuthError { throw authError(error.description) }
+    }
+
+    private func performLoginResult(credential: CredentialConfig, options: GmailOAuthLoginOptions) throws -> GmailOAuthLoginResult {
         let profile = try loadGmailOAuthClientRecord(for: credential)
         let client = GoogleOAuthClient(
             clientId: profile.clientId,
@@ -94,19 +100,28 @@ struct GmailOAuthBootstrapper {
             authURI: profile.authorizationEndpoint,
             tokenURI: profile.tokenEndpoint
         )
-        let redirect: GmailLoopbackRedirectURI
-        do {
-            redirect = try selectedGmailOAuthLoopbackRedirect(client: profile, requestedURI: options.redirectURI)
-        } catch where options.redirectURI != nil {
-            throw authError("OAuth redirect URI must be a registered http:// loopback URL")
+        let shared: OAuthCallbackServer?
+        let receiver: LoopbackOAuthReceiver?
+        let redirectURI: String
+        if profile.kind == "web" || OAuthCallbackSettings.isConfigured(prefix: "GMAIL_GATEWAY_") {
+            let settings = try OAuthCallbackSettings(prefix: "GMAIL_GATEWAY_", defaultPath: "/oauth2callback",
+                requestedURI: options.redirectURI ?? (profile.kind == "web" && !OAuthCallbackSettings.isConfigured(prefix: "GMAIL_GATEWAY_") ? profile.redirectURIs.first : nil))
+            let server = try OAuthCallbackServer(settings: settings)
+            shared = server; receiver = nil; redirectURI = server.redirectURI.absoluteString
+        } else {
+            let redirect: GmailLoopbackRedirectURI
+            do { redirect = try selectedGmailOAuthLoopbackRedirect(client: profile, requestedURI: options.redirectURI) }
+            catch where options.redirectURI != nil { throw authError("OAuth redirect URI must be a registered http:// loopback URL") }
+            let local = try receiverFactory(redirect)
+            receiver = local; shared = nil; redirectURI = local.redirectURI
         }
-        let receiver = try receiverFactory(redirect)
+        try OAuthCallbackSettings.validateClientRedirect(kind: profile.kind, registered: profile.redirectURIs, redirect: redirectURI)
         let state = try randomURLSafeString(byteCount: 32)
         let codeVerifier = try randomURLSafeString(byteCount: 32)
         let authorizationURL = try buildAuthorizationURL(
             client: client,
             credential: credential,
-            redirectURI: receiver.redirectURI,
+            redirectURI: redirectURI,
             state: state,
             codeVerifier: codeVerifier
         )
@@ -114,25 +129,28 @@ struct GmailOAuthBootstrapper {
         if options.openBrowser {
             try browserOpener(authorizationURL)
         } else {
-            guard isInteractiveTerminal() else {
-                throw authError("Manual OAuth authorization requires an interactive terminal")
-            }
             writeManualAuthorizationMessage(authorizationURL)
         }
-        let code = try receiver.waitForCode(expectedState: state, timeoutSeconds: options.timeoutSeconds)
+        let code: String
+        if let shared {
+            let callback = try shared.wait(expectedState: state, timeout: TimeInterval(options.timeoutSeconds))
+            guard callback.error == nil, let received = callback.code else { throw authError("OAuth authorization failed") }
+            code = received
+        } else if let receiver { code = try receiver.waitForCode(expectedState: state, timeoutSeconds: options.timeoutSeconds) }
+        else { throw authError("OAuth listener missing") }
         beforeTokenExchange()
         let tokenResponse = try exchangeAuthorizationCode(
             client: client,
             code: code,
             codeVerifier: codeVerifier,
-            redirectURI: receiver.redirectURI
+            redirectURI: redirectURI
         )
         let tokenStore = try buildTokenStore(
             credential: credential,
             tokenResponse: tokenResponse,
             profile: validateGmailProfile(accessToken: tokenResponse.accessToken)
         )
-        return GmailOAuthLoginResult(tokenStore: tokenStore, redirectURI: receiver.redirectURI)
+        return GmailOAuthLoginResult(tokenStore: tokenStore, redirectURI: redirectURI)
     }
 }
 

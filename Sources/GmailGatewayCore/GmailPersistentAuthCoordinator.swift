@@ -13,6 +13,7 @@ struct GmailAuthCoordinator: Sendable {
     private let environment: [String: String]
     private let policy: GmailAuthPolicy
     private let vault: GmailCredentialVault
+    private let persistenceBackend: String
     private let loginResult: @Sendable (CredentialConfig, GmailOAuthLoginOptions) throws -> GmailOAuthLoginResult
     private let refreshToken: @Sendable (CredentialConfig, GmailOAuthTokenStore) throws -> GmailOAuthTokenStore
     private let lifecyclePhase: @Sendable (GmailPersistentAuthLifecyclePhase) async -> Void
@@ -23,7 +24,7 @@ struct GmailAuthCoordinator: Sendable {
         config: GmailGatewayConfig,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         policy: GmailAuthPolicy,
-        store: any SecureCredentialStore = KeychainCredentialStore(service: "com.tacogips.gmail-gateway"),
+        store: (any SecureCredentialStore)? = nil,
         loginResult: @escaping @Sendable (CredentialConfig, GmailOAuthLoginOptions) throws -> GmailOAuthLoginResult = { credential, options in
             try GmailOAuthBootstrapper().loginResult(credential: credential, options: options)
         },
@@ -35,7 +36,9 @@ struct GmailAuthCoordinator: Sendable {
         self.config = config
         self.environment = environment
         self.policy = policy
-        vault = GmailCredentialVault(store: store)
+        let selectedStore = store ?? FileCredentialStore(productDirectory: "gmail-gateway", environment: environment)
+        vault = GmailCredentialVault(store: selectedStore)
+        persistenceBackend = selectedStore is KeychainCredentialStore ? "KEYCHAIN" : selectedStore is FileCredentialStore ? "FILE" : "CUSTOM"
         self.loginResult = loginResult
         self.refreshToken = refreshToken
         self.lifecyclePhase = lifecyclePhase
@@ -88,7 +91,7 @@ struct GmailAuthCoordinator: Sendable {
             "accessMode": credential.accessMode.rawValue,
             "clientKind": client.kind,
             "projectId": client.projectId as Any? ?? NSNull(),
-            "persistenceBackend": "KEYCHAIN",
+            "persistenceBackend": persistenceBackend,
             "clientStored": true
         ]
     }
@@ -444,10 +447,10 @@ struct GmailAuthCoordinator: Sendable {
             "emailAddress": token.emailAddress as Any? ?? NSNull(),
             "expiresAt": token.expiresAt as Any? ?? NSNull(),
             "hasRefreshToken": true,
-            "persistenceBackend": destination.persistenceBackend
+            "persistenceBackend": destination.isProfileStore ? persistenceBackend : destination.persistenceBackend
         ].merging(tokenSourceDiagnostics(
             credential,
-            source: destination.persistenceBackend == "KEYCHAIN" ? .secureVault : resolver().tokenSourceKind(for: credential)
+            source: destination.isProfileStore ? .secureVault : resolver().tokenSourceKind(for: credential)
         )) { current, _ in current }
     }
 
@@ -617,7 +620,7 @@ private func statusMetadataIsSafe(for state: AuthState) -> Bool {
 
 private func persistentConfigSourceError(_ credential: CredentialConfig) -> GmailGatewayError {
     GmailGatewayError(
-        "credentials.\(credential.id).oauth_client_secret_path is not readable and no persistent Keychain client is available",
+        "credentials.\(credential.id).oauth_client_secret_path is not readable and no persistent local client is available",
         code: .configInvalid,
         exitCode: .configurationError
     )
@@ -654,9 +657,10 @@ func validatedPersistentLoginToken(
 }
 
 private extension GmailTokenDestination {
+    var isProfileStore: Bool { if case .vault = self { return true }; return false }
     var persistenceBackend: String {
         switch self {
-        case .vault: "KEYCHAIN"
+        case .vault: "FILE"
         case .file: "FILE"
         case .immutableEnvironment: "ENVIRONMENT"
         }

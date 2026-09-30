@@ -208,7 +208,7 @@ for one workflow cannot be borrowed for the other.
 ## Persistent OAuth Setup
 
 `gmail-gateway-reader`, `gmail-gateway-sender`, and `gmail-gateway-draft` can
-keep a Desktop OAuth client and token in the macOS Keychain. Run setup once,
+keep a Desktop OAuth client and token in private local credential files. Run setup once,
 then login for the executable's fixed access mode:
 
 ```bash
@@ -221,13 +221,13 @@ gmail-gateway-reader auth revoke --credential gmail-personal --confirm-credentia
 Use the sender or draft executable for a `read_send` credential. Setup accepts
 only a Google Desktop client JSON file. Replacing a stored client requires both
 `--replace` and an exact `--confirm-credential`; replacing it clears its token.
-Status and command output redact OAuth secrets and Keychain identifiers.
+Status and command output redact OAuth secrets and credential identifiers.
 
 Explicit credential environment variables and configured credential paths still
 take precedence. Existing token files without exact scope metadata and a client
 fingerprint require one re-login. `gmail-gateway-threads` and
 `gmail-gateway-message-box` retain their legacy authentication contract and do
-not expose `auth setup`. For a Keychain-only TOML credential, omit both
+not expose `auth setup`. For a local-profile-only TOML credential, omit both
 `oauth_client_secret_path` and `token_store_path`; omitted paths are synthesized
 fallbacks, so the persistent profile is selected first.
 
@@ -365,7 +365,7 @@ by the executable or an injected access token.
 Reader keeps its historical default token filename `gmail-personal.json`.
 Other modes use `gmail-personal-read-send.json`, `gmail-personal-read-modify.json`,
 and `gmail-personal-full.json`. Draft/sender deliberately share their send profile.
-Persistent Keychain entries are already separated by credential ID and access mode.
+Persistent local profile entries are already separated by credential ID and access mode.
 Only reader retains migration from the historical synthesized reader token file.
 Canonical product/profile inputs and existing explicit file paths remain supported.
 
@@ -399,3 +399,33 @@ client, preserving explicit OAuth client environment overrides. A successful
 native login clears a previous gcloud provider selection. Client registration
 is separate from project creation and API enablement. This change does not
 claim that client registration or real authorization is complete.
+
+## Callback configuration and Web OAuth
+
+Use the product prefix (`GMAIL_GATEWAY_`) with the same suffixes:
+
+| Suffix | Value |
+| --- | --- |
+| `OAUTH_REDIRECT_URI` | Public HTTPS callback URL, or HTTP loopback URL |
+| `OAUTH_LISTEN_HOST` | Local listener address; defaults to `127.0.0.1` |
+| `OAUTH_LISTEN_PORT` | Local listener port; `0` chooses an available port |
+
+Desktop clients require HTTP loopback redirects. Web clients support public
+HTTPS redirects and require an exact match to a registered URI in their client
+JSON. Put an HTTPS reverse proxy in front of the HTTP listener, forwarding the
+callback path unchanged. The listener stops when the login flow ends.
+
+Service gateway's `clients register --file /absolute/client.json --product
+PRODUCT [--redirect-uri URI] [--listen-host ADDRESS] [--listen-port PORT]
+[--replace]` imports an existing registered Google client and callback settings
+for the selected product. This is local configuration, not Google-side OAuth
+client creation. Environment values override stored callback settings.
+External access tokens and token JSON/path inputs remain supported.
+
+Native persistent profiles now use private files under
+`$XDG_STATE_HOME/gmail-gateway/credentials` (default
+`~/.local/state/gmail-gateway/credentials`), mode 0700 directories and 0600 files.
+CLI authentication does not read, migrate, or write Keychain. Existing Keychain
+profiles require a new file-based login/setup. Explicit SDK store injection
+remains available. Manual authorization URLs are printed without requiring an
+interactive terminal, so remote deployment can use a browser on another device.

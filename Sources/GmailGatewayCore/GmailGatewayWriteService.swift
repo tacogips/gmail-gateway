@@ -26,7 +26,9 @@ public enum GmailGatewayWriteOperation: String, Sendable {
     /// The mailbox capability a credential must hold for this operation.
     var requiredCapability: MailboxCapability {
         switch self {
-        case .createDraft, .updateDraft, .deleteDraft, .readDraft, .sendDraft, .send:
+        case .readDraft:
+            return .read
+        case .createDraft, .updateDraft, .deleteDraft, .sendDraft, .send:
             return .send
         case .modifyThreadLabels, .modifyMessageLabels, .batchModifyMessageLabels,
              .trashThread, .untrashThread, .trashMessage, .untrashMessage,
@@ -241,7 +243,7 @@ public struct GmailGatewayWriteService {
     ) throws -> (account: AccountConfig, credential: CredentialConfig) {
         let account = try readerService.requireAccount(accountId)
         let credential = try readerService.requireCredential(account.credentialId)
-        guard !account.isFallback else {
+        guard !account.isFallback || operation == .readDraft else {
             throw GmailGatewayError(
                 "Fallback account cannot mutate mail; create a config file with an explicit email_address",
                 code: .configInvalid,
@@ -262,7 +264,7 @@ public struct GmailGatewayWriteService {
                 ]
             )
         }
-        try validateAuthenticatedSenderIdentity(account: account, credential: credential)
+        if !account.isFallback { try validateAuthenticatedSenderIdentity(account: account, credential: credential) }
         return (account, credential)
     }
 

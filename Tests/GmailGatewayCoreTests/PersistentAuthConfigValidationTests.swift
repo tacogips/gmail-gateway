@@ -45,7 +45,7 @@ final class PersistentAuthConfigValidationTests: XCTestCase {
                 arguments: ["config", "validate", "--config", fixture.configPath], environment: [:]
             )
             XCTAssertEqual(result.exitCode, GmailGatewayExitCode.configurationError.rawValue)
-            XCTAssertTrue(result.stderr.contains("no persistent Keychain client is available"))
+            XCTAssertTrue(result.stderr.contains("no persistent local client is available"))
         }
     }
 

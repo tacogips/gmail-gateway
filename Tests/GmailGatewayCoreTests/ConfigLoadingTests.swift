@@ -94,7 +94,7 @@ import Testing
         let emptyVaultResult = await GmailGatewayCLI(mode: mode, authPolicy: .persistent(requiredAccessMode: accessMode), secureCredentialStore: store)
             .runPersistent(arguments: ["config", "validate", "--config", paths.root + "/config.toml"], environment: [:])
         #expect(emptyVaultResult.exitCode == GmailGatewayExitCode.configurationError.rawValue)
-        #expect(emptyVaultResult.stderr.contains("no persistent Keychain client is available"))
+        #expect(emptyVaultResult.stderr.contains("no persistent local client is available"))
         let config = try GmailGatewayConfigLoader.loadConfig(configPath: paths.root + "/config.toml", environment: [:])
         let coordinator = GmailAuthCoordinator(config: config, policy: .persistent(requiredAccessMode: accessMode), store: store)
         _ = try await coordinator.setup(
@@ -263,7 +263,8 @@ import Testing
     #expect(capabilities["canSend"] as? Bool == false)
 }
 
-@Test func fallbackAccountCannotSendEvenWithReadSendCredential() throws {
+@Test(arguments: [AccessMode.read, .readSend, .readModify, .full])
+func fallbackAccountCanReadDraftsButCannotSend(accessMode: AccessMode) throws {
     let paths = temporaryConfigPaths()
     defer {
         try? FileManager.default.removeItem(atPath: paths.root)
@@ -279,7 +280,7 @@ import Testing
             CredentialConfig(
                 id: "gmail-personal",
                 provider: .gmail,
-                accessMode: .readSend,
+                accessMode: accessMode,
                 oauthClientSecretPath: paths.root + "/client.json",
                 oauthClientSecretJSON: nil,
                 tokenStorePath: paths.root + "/token.json",
@@ -297,6 +298,9 @@ import Testing
             )
         ]
     )
+    let readable = try GmailGatewayWriteService(config: config).requireWritableAccount(accountId: "personal", operation: .readDraft)
+    #expect(readable.account.isFallback)
+
     let input = OutboundMailInput(
         accountId: "personal",
         to: ["recipient@example.com"],

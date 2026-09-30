@@ -1,5 +1,5 @@
 {
-  "originHash" : "08fb36dcf003997c4e65af976f08f46a6ebd0bacd045ef0363df9833c1b7cb5d",
+  "originHash" : "702bb622e5736b61eec59866ff003255e1b249ff014305b0dce84ce4cb2aa313",
   "pins" : [
     {
       "identity" : "gateway-sdk-kit",
@@ -15,7 +15,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tacogips/google-gateway-auth.git",
       "state" : {
-        "revision" : "dda86daa5ca1b9a761977e4a9891e4e4380cf4dd"
+        "revision" : "2951cd8829d94d0b16e2a3bfdca301e57bb1f862"
       }
     },
     {
@@ -23,8 +23,25 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tacogips/google-service-gateway.git",
       "state" : {
-        "revision" : "6f4163c83c7acb9479579344c581006be9bc66c4",
-        "version" : "0.1.1"
+        "revision" : "e2d11843fd5afa6065ec438f8d2a0149c88f4aed"
+      }
+    },
+    {
+      "identity" : "swift-asn1",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-asn1.git",
+      "state" : {
+        "revision" : "3b6410f7dee09eb33cdd26260c5fd47fda19b0e2",
+        "version" : "1.7.3"
+      }
+    },
+    {
+      "identity" : "swift-crypto",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-crypto.git",
+      "state" : {
+        "revision" : "da9d28d69ebe3894b18376c8f2395c2f37b8448f",
+        "version" : "4.5.2"
       }
     }
   ],
