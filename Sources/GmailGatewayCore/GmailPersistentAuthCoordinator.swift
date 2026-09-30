@@ -397,7 +397,7 @@ struct GmailAuthCoordinator: Sendable {
         try await recoverPersistentTokenTransactionIfNeeded(credential)
         let resolver = resolver()
         guard let client = try await resolver.resolveClient(for: credential) else {
-            throw GmailGatewayError("run auth setup or configure an OAuth client before auth login", code: .authRequired, exitCode: .authenticationBootstrapError)
+            throw GmailGatewayError("No OAuth application client is available for this gateway; browser login cannot start", code: .authRequired, exitCode: .authenticationBootstrapError)
         }
         let destination = try await resolver.loginDestination(for: credential, client: client.value)
         await lifecyclePhase(.loginDestinationResolved)

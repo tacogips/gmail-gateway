@@ -1,7 +1,7 @@
 import Foundation
 
 func gmailGatewayVersion() -> String {
-    "0.1.15"
+    "0.1.16"
 }
 
 func nonBlank(_ value: String?) -> String? {

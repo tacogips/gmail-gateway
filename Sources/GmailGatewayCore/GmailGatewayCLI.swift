@@ -227,7 +227,7 @@ public struct GmailGatewayCLI {
     }
 
     private func shouldShowHelp(_ parsed: ParsedArgs) -> Bool {
-        parsed.flags["help"] != nil || parsed.positionals.first == "help"
+        parsed.flags["help"] != nil || parsed.positionals.first == "help" || parsed.positionals == ["auth"]
     }
 
     private func shouldShowVersion(_ parsed: ParsedArgs) -> Bool {

@@ -495,6 +495,7 @@ extension GmailRequestProtocolTests {
             #expect(GatewayRuntimeURLProtocol.requests.first?.method == "GET")
             #expect(GatewayRuntimeURLProtocol.requests.first?.url.contains("/gmail/v1/users/me/drafts/draft-1") == true)
             #expect(!GatewayRuntimeURLProtocol.methods.contains("PUT"))
+            try await waitForProviderStop()
             #expect(GatewayRuntimeURLProtocol.stoppedRequestCount >= 1)
         }
 
@@ -675,6 +676,7 @@ extension GmailRequestProtocolTests {
             #expect(GatewayRuntimeURLProtocol.requests.count == 1)
             #expect(GatewayRuntimeURLProtocol.requests.first?.url.hasSuffix("/oauth/token") == true)
             #expect(!GatewayRuntimeURLProtocol.urls.contains { $0.path.hasPrefix("/gmail/v1/") })
+            try await waitForProviderStop()
             #expect(GatewayRuntimeURLProtocol.stoppedRequestCount >= 1)
         }
 
@@ -764,6 +766,18 @@ private func waitForProviderResponses(count: Int) async throws {
     }
     throw GmailGatewayError(
         "Timed out waiting for provider response",
+        code: .unexpectedError,
+        exitCode: .generalError
+    )
+}
+
+private func waitForProviderStop() async throws {
+    for _ in 0..<100 {
+        if GatewayRuntimeURLProtocol.stoppedRequestCount >= 1 { return }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    throw GmailGatewayError(
+        "Timed out waiting for cancelled provider request",
         code: .unexpectedError,
         exitCode: .generalError
     )

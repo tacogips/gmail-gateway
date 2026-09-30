@@ -29,7 +29,8 @@ final class SynthesizedCredentialModeTests: XCTestCase {
             let result = await GmailGatewayCLI(mode: mode, authPolicy: persistentPolicy(for: mode), secureCredentialStore: TestSecureCredentialStore())
                 .runPersistent(arguments: ["auth", "login"], environment: defaultModeEnvironment(root))
             XCTAssertEqual(result.exitCode, 4, result.stderr)
-            XCTAssertTrue(result.stderr.contains("OAuth client"), result.stderr)
+            XCTAssertTrue(result.stderr.contains("OAuth application client"), result.stderr)
+            XCTAssertTrue(result.stderr.contains("browser login cannot start"), result.stderr)
             XCTAssertFalse(result.stderr.contains("access mode does not match"), result.stderr)
         }
     }
