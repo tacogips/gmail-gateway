@@ -1,3 +1,4 @@
+import GoogleGatewayAuth
 import Foundation
 import GmailGatewayCore
 
@@ -7,9 +8,11 @@ import Glibc
 import Darwin
 #endif
 
+let gatewayInvocation = GatewayAuthBootstrap.prepareOrExit(product: .gmail, role: "reader")
+
 let result = await GmailGatewayCLI(mode: .reader, authPolicy: .persistent(requiredAccessMode: .read)).runPersistent(
-    arguments: Array(CommandLine.arguments.dropFirst()),
-    environment: ProcessInfo.processInfo.environment
+    arguments: gatewayInvocation.arguments,
+    environment: gatewayInvocation.environment
 )
 
 if !result.stdout.isEmpty {
@@ -19,4 +22,4 @@ if !result.stderr.isEmpty {
     FileHandle.standardError.write(Data(result.stderr.utf8))
 }
 
-exit(result.exitCode)
+exit(gatewayInvocation.complete(exitCode: result.exitCode))

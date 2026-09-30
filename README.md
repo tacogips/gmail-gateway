@@ -374,3 +374,28 @@ than rejecting the synthesized access mode. A registered distribution applicatio
 is still needed to remove user application setup. Mocked login tests prove reader
 and send profiles retain separate stored tokens and subsequent resolution works
 without supplying the application again.
+
+## gcloud authentication provider
+
+CLI executables support `auth login --provider gcloud`. Gcloud performs browser
+login and stores its credentials in a private gateway role/profile directory.
+Subsequent commands retrieve fresh tokens from that selected provider without
+printing tokens or requiring token environment variables. `auth status`,
+`auth refresh`, and `auth revoke` use the selected provider; revocation requires explicit credential/profile selection and preserves the gateway’s confirmation requirements; revocation does not
+modify the user's normal gcloud credentials. Explicit external token/JSON/file
+inputs still override the stored provider selection.
+
+Gcloud must be installed. `GMAIL_GATEWAY_GCLOUD_PATH` optionally selects an
+absolute gcloud executable path, using the same product prefix as credential
+inputs. Workspace APIs require a registered Desktop OAuth client even when
+using gcloud's application-default login. Service and OCR can use gcloud's
+built-in Cloud client. Role permissions, account access, and API-specific
+requirements continue to apply.
+
+Provider-free `auth login` uses the native OAuth flow. A maintainer-installed
+private `$XDG_CONFIG_HOME/gmail-gateway/oauth-client.json` (default:
+`~/.config/gmail-gateway/oauth-client.json`) supplies its default Desktop
+client, preserving explicit OAuth client environment overrides. A successful
+native login clears a previous gcloud provider selection. Client registration
+is separate from project creation and API enablement. This change does not
+claim that client registration or real authorization is complete.
