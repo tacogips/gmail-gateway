@@ -95,6 +95,12 @@ struct GmailAuthCoordinator: Sendable {
 
     func status(credentialId: String) async throws -> [String: Any] {
         let credential = try selectedCredential(credentialId)
+        if credential.directAccessToken != nil {
+            return ["credentialId": credential.id, "provider": credential.provider.rawValue,
+                    "accessMode": credential.accessMode.rawValue, "state": AuthState.ready.rawValue,
+                    "tokenSource": "ENVIRONMENT_TOKEN", "hasRefreshToken": false,
+                    "grantedScopes": [], "clientState": "MISSING", "tokenState": "READY"]
+        }
         let resolver = resolver()
         let profile = try? await vault.profile(credentialId: credential.id, accessMode: credential.accessMode)
         let clientSource = resolver.clientSourceKind(for: credential)
@@ -277,6 +283,9 @@ struct GmailAuthCoordinator: Sendable {
 
     func revoke(credentialId: String, confirmedCredentialId: String?) async throws -> [String: Any] {
         let credential = try selectedCredential(credentialId)
+        guard credential.directAccessToken == nil else {
+            throw GmailGatewayError("Direct environment tokens are immutable; remove ACCESS_TOKEN before managing stored credentials", code: .invalidArgument, exitCode: .invalidCliUsage)
+        }
         await lifecycleLockAttempt()
         return try await withLifecycleLock(credential) {
             try await revokeLocked(credential: credential, confirmedCredentialId: confirmedCredentialId)
@@ -375,6 +384,9 @@ struct GmailAuthCoordinator: Sendable {
 
     func login(credentialId: String, options: GmailOAuthLoginOptions) async throws -> [String: Any] {
         let credential = try selectedCredential(credentialId)
+        guard credential.directAccessToken == nil else {
+            throw GmailGatewayError("Direct environment tokens are immutable; remove ACCESS_TOKEN before managing stored credentials", code: .invalidArgument, exitCode: .invalidCliUsage)
+        }
         await lifecycleLockAttempt()
         return try await withLifecycleLock(credential) {
             try await loginLocked(credential: credential, options: options)
@@ -452,6 +464,7 @@ struct GmailAuthCoordinator: Sendable {
                 )
             }
             try validatePersistentCredential(credential, policy: policy)
+            if credential.directAccessToken != nil { return credential }
             await lifecycleLockAttempt()
             return try await withLifecycleLock(credential) {
                 try await recoverPersistentTokenTransactionIfNeeded(credential)

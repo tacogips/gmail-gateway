@@ -167,6 +167,7 @@ public struct CredentialConfig: Sendable {
     public let id: String
     public let provider: MailProvider
     public let accessMode: AccessMode
+    public let directAccessToken: String?
     public let oauthClientSecretPath: String
     public let oauthClientSecretJSON: String?
     public let tokenStorePath: String
@@ -179,6 +180,7 @@ public struct CredentialConfig: Sendable {
         id: String,
         provider: MailProvider,
         accessMode: AccessMode,
+        directAccessToken: String? = nil,
         oauthClientSecretPath: String,
         oauthClientSecretJSON: String?,
         tokenStorePath: String,
@@ -190,6 +192,7 @@ public struct CredentialConfig: Sendable {
         self.id = id
         self.provider = provider
         self.accessMode = accessMode
+        self.directAccessToken = directAccessToken
         self.oauthClientSecretPath = oauthClientSecretPath
         self.oauthClientSecretJSON = oauthClientSecretJSON
         self.tokenStorePath = tokenStorePath
@@ -394,6 +397,12 @@ public struct GmailGatewayService {
 
     public func getAuthStatus(credentialId: String) throws -> [String: Any] {
         let credential = try requireCredential(credentialId)
+        if credential.directAccessToken != nil {
+            return ["credentialId": credential.id, "provider": credential.provider.rawValue,
+                    "configuredAccessMode": credential.accessMode.rawValue, "state": AuthState.ready.rawValue,
+                    "tokenSource": "ENVIRONMENT_TOKEN", "tokenStoreExists": false,
+                    "tokenStorePath": NSNull(), "grantedAccessMode": NSNull(), "expiresAt": NSNull(), "hasRefreshToken": false]
+        }
         try migrateGmailDefaultTokenStore(credential)
         let tokenState = inspectTokenStore(credential: credential)
         return [
@@ -411,8 +420,8 @@ public struct GmailGatewayService {
 
     public func revokeAuth(credentialId: String) throws -> [String: Any] {
         let credential = try requireCredential(credentialId)
-        guard credential.tokenStoreJSON == nil else {
-            throw GmailGatewayError("Inline token JSON is immutable; remove the environment override to revoke it",
+        guard credential.tokenStoreJSON == nil, credential.directAccessToken == nil else {
+            throw GmailGatewayError("Environment credentials are immutable; remove the environment override to revoke them",
                                     code: .invalidArgument, exitCode: .invalidCliUsage)
         }
         try migrateGmailDefaultTokenStore(credential)

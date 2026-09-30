@@ -90,7 +90,8 @@ public struct GmailGatewayCLI {
                 environment: environment,
                 validateOAuthClientSecrets: isConfigValidation,
                 allowMissingSynthesizedOAuthClient: isConfigValidation,
-                deferSynthesizedOAuthClientValidation: isConfigValidation
+                deferSynthesizedOAuthClientValidation: isConfigValidation,
+                synthesizedAccessMode: mode.synthesizedAccessMode
             )
             configurationLoaded(config)
             let coordinator = GmailAuthCoordinator(
@@ -517,7 +518,7 @@ public struct GmailGatewayCLI {
         environment: [String: String],
         pretty: Bool
     ) throws -> GmailGatewayCommandResult {
-        guard let credentialId = try getStringFlag(flags, "credential") else {
+        guard let credentialId = try getStringFlag(flags, "credential") ?? (subcommand == "login" ? GmailGatewayConfigLoader.defaultCredentialId : nil) else {
             throw GmailGatewayError(
                 "auth commands require --credential",
                 code: .invalidArgument,
@@ -563,7 +564,7 @@ public struct GmailGatewayCLI {
         coordinator: GmailAuthCoordinator,
         pretty: Bool
     ) async throws -> GmailGatewayCommandResult {
-        guard let credentialId = try getStringFlag(flags, "credential") else {
+        guard let credentialId = try getStringFlag(flags, "credential") ?? (subcommand == "login" ? GmailGatewayConfigLoader.defaultCredentialId : nil) else {
             throw GmailGatewayError("auth commands require --credential", code: .invalidArgument, exitCode: .invalidCliUsage)
         }
         switch subcommand {
@@ -672,7 +673,7 @@ public struct GmailGatewayCLI {
         config preloadedConfig: GmailGatewayConfig? = nil
     ) throws -> GmailGatewayService {
         GmailGatewayService(
-            config: try preloadedConfig ?? GmailGatewayConfigLoader.loadConfig(configPath: configPath, environment: environment)
+            config: try preloadedConfig ?? GmailGatewayConfigLoader.loadConfig(configPath: configPath, environment: environment, synthesizedAccessMode: mode.synthesizedAccessMode)
         )
     }
 
@@ -804,9 +805,9 @@ private func rootHelpText(mode: GmailGatewayCLIMode) -> String {
     let executableName = mode.executableName
     let authCommand = switch mode {
     case .reader, .draftGateway, .directSender:
-        "auth <setup|login|revoke|status> --credential <id>"
+        "auth login [--credential <id>] | auth <setup|revoke|status> --credential <id>"
     case .mailboxThreads, .messageBox:
-        "auth <login|revoke|status> --credential <id>"
+        "auth login [--credential <id>] | auth <revoke|status> --credential <id>"
     }
     let persistentAuthText = switch mode {
     case .reader, .draftGateway, .directSender:

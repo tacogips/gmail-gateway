@@ -60,6 +60,9 @@ struct GmailOAuthBootstrapper {
     }
 
     func login(credential: CredentialConfig, options: GmailOAuthLoginOptions = GmailOAuthLoginOptions()) throws -> [String: Any] {
+        guard credential.directAccessToken == nil else {
+            throw GmailGatewayError("Remove ACCESS_TOKEN before auth login", code: .invalidArgument, exitCode: .invalidCliUsage)
+        }
         try migrateGmailDefaultTokenStore(credential)
         let result = try loginResult(credential: credential, options: options)
         try writeGmailOAuthTokenStore(

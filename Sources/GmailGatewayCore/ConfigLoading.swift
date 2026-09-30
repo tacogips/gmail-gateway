@@ -23,7 +23,7 @@ public enum GmailGatewayConfigurationPolicy: String, Sendable {
 }
 
 public enum GmailGatewayConfigLoader {
-    private static let defaultCredentialId = "gmail-personal"
+    static let defaultCredentialId = "gmail-personal"
     private static let defaultAccountId = "personal"
 
     public static func getCredentialPathEnvVarName(credentialId: String, pathKey: String) -> String {
@@ -94,13 +94,14 @@ public enum GmailGatewayConfigLoader {
 
     public static func loadConfig(
         configPath: String? = nil,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
+        environment sourceEnvironment: [String: String] = ProcessInfo.processInfo.environment,
         validateOAuthClientSecrets: Bool = false,
         policy: GmailGatewayConfigurationPolicy = .cliDefaults,
         allowMissingSynthesizedOAuthClient: Bool = false,
-        deferSynthesizedOAuthClientValidation: Bool = false
+        deferSynthesizedOAuthClientValidation: Bool = false,
+        synthesizedAccessMode: AccessMode = .read
     ) throws -> GmailGatewayConfig {
-        let explicitConfigPath = nonBlank(configPath) ?? nonBlank(environment["GMAIL_GATEWAY_CONFIG"])
+        let explicitConfigPath = nonBlank(configPath) ?? nonBlank(sourceEnvironment["GMAIL_GATEWAY_CONFIG"])
         let usesImplicitDefaultConfig = explicitConfigPath == nil && policy == .cliDefaults
         let selectedConfigPath: String
         if policy == .strictEnvironment {
@@ -113,7 +114,7 @@ public enum GmailGatewayConfigLoader {
             selectedConfigPath = normalizedPath(explicitConfigPath)
         } else {
             selectedConfigPath = normalizedPath(
-                explicitConfigPath ?? resolveDefaultConfigPath(environment: environment)
+                explicitConfigPath ?? resolveDefaultConfigPath(environment: sourceEnvironment)
             )
         }
         let source: String
@@ -122,7 +123,7 @@ public enum GmailGatewayConfigLoader {
         } catch {
             if usesImplicitDefaultConfig,
                !FileManager.default.fileExists(atPath: selectedConfigPath) {
-                let config = try defaultConfig(configPath: selectedConfigPath, environment: environment)
+                let config = try defaultConfig(configPath: selectedConfigPath, environment: gmailCredentialEnvironment(sourceEnvironment), accessMode: synthesizedAccessMode)
                 if validateOAuthClientSecrets {
                     try validateOAuthClientSecretPaths(
                         config.credentials,
@@ -154,6 +155,9 @@ public enum GmailGatewayConfigLoader {
             throw configError("accounts must be a non-empty array")
         }
 
+        let environment = try gmailCredentialEnvironment(
+            sourceEnvironment, credentialIDs: parsed.credentials.compactMap { $0["id"] as? String }
+        )
         let storage = try parseStorageConfig(
             storageRecord,
             configPath: selectedConfigPath,
@@ -222,7 +226,8 @@ public enum GmailGatewayConfigLoader {
 
     private static func defaultConfig(
         configPath: String,
-        environment: [String: String]
+        environment: [String: String],
+        accessMode: AccessMode
     ) throws -> GmailGatewayConfig {
         let storage = StorageConfig(
             cacheDir: defaultDataDirectory(environment: environment),
@@ -235,10 +240,12 @@ public enum GmailGatewayConfigLoader {
                     .path)
             ]
         )
+        let tokenFilename = accessMode == .read ? defaultCredentialId : defaultCredentialId + "-" + accessMode.rawValue.replacingOccurrences(of: "_", with: "-")
         let credential = CredentialConfig(
             id: defaultCredentialId,
             provider: .gmail,
-            accessMode: .read,
+            accessMode: accessMode,
+            directAccessToken: nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_ACCESS_TOKEN"]),
             oauthClientSecretPath: try resolveCredentialPath(CredentialPathRequest(
                 configPath: configPath,
                 credentialId: defaultCredentialId,
@@ -258,7 +265,7 @@ public enum GmailGatewayConfigLoader {
                 credentialId: defaultCredentialId,
                 pathKey: "token_store_path",
                 configValue: URL(fileURLWithPath: resolveDefaultCredentialDirectory(environment: environment))
-                    .appendingPathComponent("\(defaultCredentialId).json")
+                    .appendingPathComponent("\(tokenFilename).json")
                     .path,
                 environment: environment,
                 context: "credentials.\(defaultCredentialId).token_store_path",
@@ -278,8 +285,8 @@ public enum GmailGatewayConfigLoader {
                 pathKey: "token_store_path"
             )]) != nil ? .environmentPath :
                 (nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) == nil ? .synthesizedDefault : .relocatedPath),
-            legacyDefaultTokenStorePath: URL(fileURLWithPath: configPath).deletingLastPathComponent()
-                .appendingPathComponent("tokens/\(defaultCredentialId).json").path
+            legacyDefaultTokenStorePath: accessMode == .read ? URL(fileURLWithPath: configPath).deletingLastPathComponent()
+                .appendingPathComponent("tokens/\(defaultCredentialId).json").path : nil
         )
         return GmailGatewayConfig(
             configPath: configPath,
@@ -586,6 +593,7 @@ private func parseCredentialConfig(
         id: credentialId,
         provider: try readProvider(record["provider"], "\(contextBase).provider"),
         accessMode: try readAccessMode(record["access_mode"], "\(contextBase).access_mode"),
+        directAccessToken: nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_" + credentialId.uppercased().replacingOccurrences(of: "-", with: "_") + "_ACCESS_TOKEN"]),
         oauthClientSecretPath: oauthPath.path,
         oauthClientSecretJSON: oauthClientSecretJSON,
         tokenStorePath: tokenPath.path,

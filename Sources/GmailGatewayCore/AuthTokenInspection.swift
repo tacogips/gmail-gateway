@@ -10,6 +10,10 @@ struct TokenInspectionResult {
 }
 
 func inspectTokenStore(credential: CredentialConfig) -> TokenInspectionResult {
+    if credential.directAccessToken != nil {
+        return TokenInspectionResult(state: .ready, exists: true, grantedAccessMode: nil,
+                                     expiresAt: nil, hasRefreshToken: false, emailAddress: nil)
+    }
     let exists: Bool
     let data: Data?
     if let tokenStoreJSON = credential.tokenStoreJSON {

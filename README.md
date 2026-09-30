@@ -329,3 +329,48 @@ brew install gmail-gateway-message-box
 ```
 
 See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.
+
+### Canonical external credentials
+
+Normal commands can use `GMAIL_GATEWAY_ACCESS_TOKEN` without `auth login` or an
+OAuth client file. Direct tokens remain in memory, are never written to the
+credential vault/files, and have no locally inspectable grant metadata. Configured
+mailbox access modes and executable capability boundaries remain enforced; Google
+is authoritative for the supplied token's actual permissions.
+
+Canonical suffixes also include `TOKEN_STORE_JSON`, `TOKEN_STORE_PATH`,
+`OAUTH_CLIENT_JSON`, and `OAUTH_CLIENT_PATH`. JSON variables contain JSON;
+path variables contain filenames. Prefix profile-specific values with
+`GMAIL_GATEWAY_CREDENTIAL_<NORMALIZED_ID>_`, such as
+`GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_ACCESS_TOKEN`. Profile values override
+product defaults. Existing `OAUTH_CLIENT_SECRET_JSON` and
+`OAUTH_CLIENT_SECRET_PATH` variables remain aliases; conflicts fail without values.
+Direct tokens cannot be combined with token-store environment inputs.
+
+Stored token JSON/files retain the existing client-fingerprint, account, scope,
+and credential-identity checks. Supplying a direct token is a separate execution
+path and does not weaken those checks. Login/revoke refuse to manage stored
+credentials while a direct-token override is active; remove it first. Writer and
+mailbox executables still require a configuration with their appropriate access
+mode; a default reader credential does not gain write permission from token input.
+
+### Fresh profiles follow the executable
+
+When no implicit or explicit configuration file exists, the synthesized
+`gmail-personal` credential uses the executable's access mode: reader uses
+`read`; draft/sender use `read_send`; threads uses `read_modify`; message-box uses
+`full`. Existing configuration files are authoritative and are never upgraded
+by the executable or an injected access token.
+
+Reader keeps its historical default token filename `gmail-personal.json`.
+Other modes use `gmail-personal-read-send.json`, `gmail-personal-read-modify.json`,
+and `gmail-personal-full.json`. Draft/sender deliberately share their send profile.
+Persistent Keychain entries are already separated by credential ID and access mode.
+Only reader retains migration from the historical synthesized reader token file.
+Canonical product/profile inputs and existing explicit file paths remain supported.
+
+Fresh `auth login` in reader/draft/sender now reaches client resolution rather
+than rejecting the synthesized access mode. A registered distribution application
+is still needed to remove user application setup. Mocked login tests prove reader
+and send profiles retain separate stored tokens and subsequent resolution works
+without supplying the application again.

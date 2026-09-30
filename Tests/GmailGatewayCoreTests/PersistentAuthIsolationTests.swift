@@ -6,7 +6,7 @@ final class PersistentAuthIsolationTests: XCTestCase {
         let targetModes: [GmailGatewayCLIMode] = [.reader, .directSender, .draftGateway]
         for mode in targetModes {
             let result = GmailGatewayCLI(mode: mode, authPolicy: persistentPolicy(for: mode)).run(arguments: ["--help"], environment: [:])
-            XCTAssertTrue(result.stdout.contains("auth <setup|login|revoke|status>"))
+            XCTAssertTrue(result.stdout.contains("auth <setup|revoke|status>"))
         }
     }
 
@@ -15,7 +15,8 @@ final class PersistentAuthIsolationTests: XCTestCase {
         for mode in excludedModes {
             let result = GmailGatewayCLI(mode: mode).run(arguments: ["--help"], environment: [:])
             XCTAssertFalse(result.stdout.contains("auth <setup|"))
-            XCTAssertTrue(result.stdout.contains("auth <login|revoke|status>"))
+            XCTAssertTrue(result.stdout.contains("auth login [--credential <id>]"))
+            XCTAssertTrue(result.stdout.contains("auth <revoke|status>"))
         }
     }
 

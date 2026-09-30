@@ -159,6 +159,7 @@ func validGmailAccessToken(
     credential: CredentialConfig,
     use: GmailAccessTokenUse
 ) throws -> String {
+    if let token = credential.directAccessToken { return token }
     let tokenStore = try loadGmailOAuthTokenStore(credential: credential, missingAuthMessage: use.missingAuthMessage)
     let accessToken = nonBlank(tokenStore.accessToken)
     if let accessToken,
