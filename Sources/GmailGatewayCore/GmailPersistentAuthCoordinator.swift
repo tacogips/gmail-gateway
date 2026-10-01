@@ -1,4 +1,5 @@
 import Foundation
+import GoogleGatewayAuth
 import GoogleServiceGatewayCore
 
 enum GmailPersistentAuthLifecyclePhase: Sendable {
@@ -282,6 +283,35 @@ struct GmailAuthCoordinator: Sendable {
             "persistentClientExists": profile != nil,
             "persistentTokenExists": profile?.token != nil
         ].merging(tokenSourceDiagnostics(credential, source: tokenSource)) { current, _ in current }
+    }
+
+    func logout(credentialId: String) async throws -> [String: Any] {
+        let credential = try selectedCredential(credentialId)
+        let external = credential.directAccessToken != nil || credential.tokenStoreJSON != nil
+            || credential.tokenStoreSource == .environmentPath
+        let result = try await GatewayLogout.performAsync(externalCredential: external) {
+            await lifecycleLockAttempt()
+            return try await withLifecycleLock(credential) {
+                try await recoverPersistentTokenTransactionIfNeeded(credential)
+                try migrateGmailDefaultTokenStore(credential)
+                var deleted = false
+                if let profile = try await vault.profile(credentialId: credential.id, accessMode: credential.accessMode), profile.token != nil {
+                    try await vault.replaceToken(nil, in: profile)
+                    deleted = true
+                }
+                if let file = try readPersistentTokenFileData(
+                    credential.tokenStorePath, credential: credential, exitCode: .authenticationBootstrapError
+                ) {
+                    try removePersistentTokenFile(at: credential.tokenStorePath, expectedState: .identity(file.identity),
+                                                  credential: credential, exitCode: .authenticationBootstrapError)
+                    deleted = true
+                }
+                return deleted
+            }
+        }
+        return ["credentialId": credential.id, "accessMode": credential.accessMode.rawValue,
+                "state": result.state, "localTokenDeleted": result.localTokenDeleted,
+                "externalCredentialPreserved": result.externalCredentialPreserved]
     }
 
     func revoke(credentialId: String, confirmedCredentialId: String?) async throws -> [String: Any] {

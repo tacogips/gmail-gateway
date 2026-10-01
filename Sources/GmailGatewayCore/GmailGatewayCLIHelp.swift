@@ -4,9 +4,9 @@ func rootHelpText(mode: GmailGatewayCLIMode) -> String {
     let executableName = mode.executableName
     let authCommand = switch mode {
     case .reader, .draftGateway, .directSender:
-        "auth login [--credential <id>] | auth <status|refresh> [--credential <id>] | auth <setup|revoke> --credential <id>"
+        "auth login [--credential <id>] | auth <status|refresh|logout> [--credential <id>] | auth <setup|revoke> --credential <id>"
     case .mailboxThreads, .messageBox:
-        "auth login [--credential <id>] | auth <revoke|status> --credential <id>"
+        "auth login [--credential <id>] | auth <logout|revoke|status> --credential <id>"
     }
     let persistentAuthText = switch mode {
     case .reader, .draftGateway, .directSender:

@@ -330,7 +330,7 @@ public struct GmailGatewayCLI {
             )
         default:
             throw GmailGatewayError(
-                "Supported commands: doctor, graphql, config validate, auth <login|revoke|status>, cache prune, file download",
+                "Supported commands: doctor, graphql, config validate, auth <login|logout|revoke|status>, cache prune, file download",
                 code: .invalidArgument,
                 exitCode: .invalidCliUsage
             )
@@ -536,7 +536,7 @@ public struct GmailGatewayCLI {
         environment: [String: String],
         pretty: Bool
     ) throws -> GmailGatewayCommandResult {
-        guard let credentialId = try getStringFlag(flags, "credential") ?? (["login", "status", "refresh"].contains(subcommand ?? "") ? GmailGatewayConfigLoader.defaultCredentialId : nil) else {
+        guard let credentialId = try getStringFlag(flags, "credential") ?? (["login", "logout", "status", "refresh"].contains(subcommand ?? "") ? GmailGatewayConfigLoader.defaultCredentialId : nil) else {
             throw GmailGatewayError(
                 "auth commands require --credential",
                 code: .invalidArgument,
@@ -547,6 +547,8 @@ public struct GmailGatewayCLI {
         switch subcommand {
         case "status":
             return success(try service.getAuthStatus(credentialId: credentialId), pretty: pretty)
+        case "logout":
+            return success(try service.logoutAuth(credentialId: credentialId), pretty: pretty)
         case "revoke":
             return success(try service.revokeAuth(credentialId: credentialId), pretty: pretty)
         case "login":
@@ -569,7 +571,7 @@ public struct GmailGatewayCLI {
             )
         default:
             throw GmailGatewayError(
-                "auth requires one of: login, revoke, status",
+                "auth requires one of: login, logout, revoke, status",
                 code: .invalidArgument,
                 exitCode: .invalidCliUsage
             )
@@ -582,7 +584,7 @@ public struct GmailGatewayCLI {
         coordinator: GmailAuthCoordinator,
         pretty: Bool
     ) async throws -> GmailGatewayCommandResult {
-        guard let credentialId = try getStringFlag(flags, "credential") ?? (["login", "status", "refresh"].contains(subcommand ?? "") ? GmailGatewayConfigLoader.defaultCredentialId : nil) else {
+        guard let credentialId = try getStringFlag(flags, "credential") ?? (["login", "logout", "status", "refresh"].contains(subcommand ?? "") ? GmailGatewayConfigLoader.defaultCredentialId : nil) else {
             throw GmailGatewayError("auth commands require --credential", code: .invalidArgument, exitCode: .invalidCliUsage)
         }
         switch subcommand {
@@ -605,6 +607,8 @@ public struct GmailGatewayCLI {
             ), pretty: pretty)
         case "status":
             return success(try await coordinator.status(credentialId: credentialId), pretty: pretty)
+        case "logout":
+            return success(try await coordinator.logout(credentialId: credentialId), pretty: pretty)
         case "revoke":
             return success(try await coordinator.revoke(
                 credentialId: credentialId,
@@ -620,7 +624,7 @@ public struct GmailGatewayCLI {
                 )
             ), pretty: pretty)
         default:
-            throw GmailGatewayError("auth requires one of: setup, login, revoke, status", code: .invalidArgument, exitCode: .invalidCliUsage)
+            throw GmailGatewayError("auth requires one of: setup, login, logout, revoke, status", code: .invalidArgument, exitCode: .invalidCliUsage)
         }
     }
 

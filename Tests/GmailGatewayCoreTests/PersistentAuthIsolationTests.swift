@@ -16,7 +16,7 @@ final class PersistentAuthIsolationTests: XCTestCase {
             let result = GmailGatewayCLI(mode: mode).run(arguments: ["--help"], environment: [:])
             XCTAssertFalse(result.stdout.contains("auth <setup|"))
             XCTAssertTrue(result.stdout.contains("auth login [--credential <id>]"))
-            XCTAssertTrue(result.stdout.contains("auth <revoke|status>"))
+            XCTAssertTrue(result.stdout.contains("auth <logout|revoke|status>"))
         }
     }
 
