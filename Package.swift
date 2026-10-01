@@ -17,9 +17,9 @@ let package = Package(
     .executable(name: "gmail-gateway-swift-smoke-tests", targets: ["GmailGatewaySwiftSmokeTests"])
   ],
   dependencies: [
-    .package(url: "https://github.com/tacogips/google-gateway-auth.git", revision: "28331014f2ab9f8f02f77d068421afac105150dc"),
+    .package(url: "https://github.com/tacogips/google-gateway-auth.git", revision: "48e0112fb5eb057cf012194cfffaa2581ba29d76"),
     .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.0"),
-    .package(url: "https://github.com/tacogips/google-service-gateway.git", revision: "989ac91473e94f885a4a61be3b4512ea763186b8")
+    .package(url: "https://github.com/tacogips/google-service-gateway.git", revision: "9111bd95e02d598a1ddeb1886c8b98fb42134dbe")
   ],
   targets: [
     .target(
