@@ -97,6 +97,7 @@ enum GmailGatewayResolvers {
 }
 
 private func config(_ context: GatewayResolverContext) throws -> GmailGatewayConfig {
+    if let configuration = GmailGatewayResolvedConfiguration.current { return configuration }
     let policy: GmailGatewayConfigurationPolicy
     if case .string(let rawValue) = context.userInfo["gmailGateway.configurationPolicy"],
        let configured = GmailGatewayConfigurationPolicy(rawValue: rawValue) {

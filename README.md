@@ -231,14 +231,26 @@ not expose `auth setup`. For a local-profile-only TOML credential, omit both
 `oauth_client_secret_path` and `token_store_path`; omitted paths are synthesized
 fallbacks, so the persistent profile is selected first.
 
-The implicit configuration also works for GraphQL reads after login. Token
-selection prefers credential `TOKEN_STORE_JSON` environment overrides, then
+The implicit configuration also works for GraphQL reads after login, including
+queries with variables and `graphql operation` calls. Commands load the saved
+profile directly; no token-format conversion or token environment variable is
+needed. The default account ID remains `personal`; its email comes from the
+validated token when available. Explicitly configured account emails must still
+match the authenticated mailbox.
+
+```bash
+gmail-gateway-reader graphql operation profile --variables '{"accountId":"personal"}'
+```
+
+Token selection prefers credential `TOKEN_STORE_JSON` environment overrides, then
 `TOKEN_STORE_PATH` overrides, then configured paths. An explicit `--config`
 does not override these credential environment variables. Inline token JSON is
 immutable: unset its exact variable before logging in. Login output reports
 `tokenSource`, `tokenStorePath` for file storage, and `tokenSourceHint` describing
 how subsequent commands can select the written token. Authentication errors
 include this source information and the selected override variable name.
+On macOS, token paths under the system `/tmp` and `/var` aliases are supported;
+user-created symlinks in token paths remain rejected.
 
 **Permanent delete requires `full`.** `deleteThread`, `deleteMessage`, and
 `batchDeleteMessages` are irreversible, bypass Trash, and cannot be undone; Gmail accepts

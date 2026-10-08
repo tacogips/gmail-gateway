@@ -1,15 +1,30 @@
 import Foundation
 import GatewaySDKKit
 
+/// Keeps the CLI's validated credential and account snapshot intact across
+/// resolver tasks without rebuilding it from environment variables. SDK calls
+/// continue to resolve only their explicitly supplied environment.
+enum GmailGatewayResolvedConfiguration {
+    @TaskLocal static var current: GmailGatewayConfig?
+}
+
 public struct GmailGatewayGraphQLExecutor: Sendable {
     private let providerAttemptLimit: Int
+    private let configuration: GmailGatewayConfig?
 
     public init() {
         providerAttemptLimit = GmailGatewayProviderBudget.maximumRequests
+        configuration = nil
     }
 
     init(providerAttemptLimit: Int) {
         self.providerAttemptLimit = providerAttemptLimit
+        configuration = nil
+    }
+
+    init(configuration: GmailGatewayConfig?) {
+        providerAttemptLimit = GmailGatewayProviderBudget.maximumRequests
+        self.configuration = configuration
     }
 
     public func run(
@@ -93,9 +108,11 @@ public struct GmailGatewayGraphQLExecutor: Sendable {
         return await withTaskCancellationHandler(operation: {
             await GmailGatewayProviderCancellationContext.$current.withValue(cancellation) {
                 await GmailGatewayProviderAttemptBudgetContext.$current.withValue(budget) {
-                    GmailGatewayGraphQLEnvelopeSerializer.canonicalize(
-                        await runtime.execute(document: document, variables: variables, context: context)
-                    )
+                    await GmailGatewayResolvedConfiguration.$current.withValue(configuration) {
+                        GmailGatewayGraphQLEnvelopeSerializer.canonicalize(
+                            await runtime.execute(document: document, variables: variables, context: context)
+                        )
+                    }
                 }
             }
         }, onCancel: {

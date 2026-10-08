@@ -564,7 +564,13 @@ private func normalizedPersistentTokenPath(
     exitCode: GmailGatewayExitCode
 ) -> String {
     let raw = URL(fileURLWithPath: path).standardizedFileURL.path
-    let normalized = raw.hasPrefix("/var/") ? "/private\(raw)" : raw
+    #if os(macOS)
+    // Expand only the fixed system aliases; user-controlled symlinks are still
+    // rejected by the descriptor walk below.
+    let normalized = raw.hasPrefix("/var/") || raw.hasPrefix("/tmp/") ? "/private\(raw)" : raw
+    #else
+    let normalized = raw
+    #endif
     guard normalized.hasPrefix("/") else {
         return ""
     }

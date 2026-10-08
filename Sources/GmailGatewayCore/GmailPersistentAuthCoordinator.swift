@@ -531,7 +531,18 @@ struct GmailAuthCoordinator: Sendable {
                     .replacingTokenJSON(try JSONEncoder().encode(resolvedToken))
             }
         }
-        return GmailGatewayConfig(configPath: config.configPath, storage: config.storage, credentials: credentials, accounts: config.accounts)
+        let accounts = config.accounts.map { account in
+            guard account.isFallback,
+                  let credential = credentials.first(where: { $0.id == account.credentialId }),
+                  credential.tokenStoreJSON != nil,
+                  let principal = inspectTokenStore(credential: credential).emailAddress else { return account }
+            return AccountConfig(
+                id: account.id, provider: account.provider, emailAddress: principal,
+                credentialId: account.credentialId, defaultLabelIds: account.defaultLabelIds,
+                isFallback: true
+            )
+        }
+        return GmailGatewayConfig(configPath: config.configPath, storage: config.storage, credentials: credentials, accounts: accounts)
     }
 
     private func selectedCredential(_ credentialId: String) throws -> CredentialConfig {

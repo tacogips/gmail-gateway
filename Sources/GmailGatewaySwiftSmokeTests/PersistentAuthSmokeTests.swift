@@ -14,7 +14,9 @@ func testPersistentAuthHelpSnapshots() throws {
         }
         let cli = GmailGatewayCLI(mode: mode, authPolicy: policy)
         let result = cli.run(arguments: ["--help"], environment: [:])
-        guard result.exitCode == 0, result.stdout.contains("auth <setup|login|revoke|status>") else {
+        guard result.exitCode == 0, result.stdout.contains("auth login [--credential <id>]"),
+              result.stdout.contains("auth setup --credential <id>"),
+              result.stdout.contains("auth revoke --credential <id> --confirm-credential <id>") else {
             throw SmokeTestFailure.assertionFailed("persistent target help regression")
         }
     }

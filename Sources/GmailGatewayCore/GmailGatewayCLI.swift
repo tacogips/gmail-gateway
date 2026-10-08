@@ -180,15 +180,11 @@ public struct GmailGatewayCLI {
                 } catch let error as GmailGatewayError {
                     return persistentGraphQLErrorResult(error, pretty: pretty)
                 }
-                let persistentEnvironment = persistentGraphQLEnvironment(
-                    environment,
-                    config: hydratedConfig
-                )
                 return try runGraphQL(
                     positionals: Array(parsed.positionals.dropFirst()),
                     flags: parsed.flags,
                     repeatedFlags: parsed.repeatedFlags,
-                    environment: persistentEnvironment,
+                    environment: environment,
                     pretty: pretty,
                     config: hydratedConfig
                 )
@@ -395,9 +391,9 @@ public struct GmailGatewayCLI {
             }
             document = try loadQuery(flags: flags)
         }
-        var effectiveEnvironment = persistentGraphQLEnvironment(environment, config: preloadedConfig)
+        var effectiveEnvironment = environment
         if let configPath = try getStringFlag(flags, "config") { effectiveEnvironment["GMAIL_GATEWAY_CONFIG"] = configPath }
-        let envelope = awaitEnvelope(query: document, variables: variables, environment: effectiveEnvironment)
+        let envelope = awaitEnvelope(query: document, variables: variables, environment: effectiveEnvironment, configuration: preloadedConfig)
         return try graphQLEnvelopeResult(envelope, pretty: pretty)
     }
 
@@ -467,13 +463,15 @@ public struct GmailGatewayCLI {
         )
     }
 
-    private func awaitEnvelope(query: String, variables: [String: GatewayJSONValue], environment: [String: String]) -> GatewayEnvelope {
+    private func awaitEnvelope(
+        query: String, variables: [String: GatewayJSONValue], environment: [String: String], configuration: GmailGatewayConfig?
+    ) -> GatewayEnvelope {
         let semaphore = DispatchSemaphore(value: 0)
         let result = LockedEnvelope()
         let selectedMode = mode
         Self.executorBridgeQueue.async {
             Task.detached {
-                result.value = await GmailGatewayGraphQLExecutor().run(
+                result.value = await GmailGatewayGraphQLExecutor(configuration: configuration).run(
                     query: query,
                     variables: variables,
                     mode: selectedMode,
@@ -739,12 +737,15 @@ private func persistentGraphQLPreflight(
     // which credentials may be hydrated after parsing, validation, and mode
     // authorization have all succeeded without provider or vault access.
     guard let document = try? GatewayGraphQLParser.parse(query),
-          let operation = try? GatewayGraphQLValidator(catalog: .gmail(mode: mode)).validate(document) else {
+          let operation = try? GatewayGraphQLValidator(catalog: .gmail(mode: mode)).validate(
+            document, variables: loadGatewayVariables(flags: flags)
+          ) else {
         return PersistentGraphQLPreflight(query: query, credentialIds: [])
     }
     try validatePersistentGraphQLInputs(operation)
     let accountIDs = Set(operation.rootFields.compactMap(persistentGraphQLAccountID))
-    let credentialIDs = Set(config.accounts.filter { accountIDs.contains($0.id) }.map(\.credentialId))
+    let includesAccounts = operation.rootFields.contains { $0.name == "accounts" }
+    let credentialIDs = Set(config.accounts.filter { includesAccounts || accountIDs.contains($0.id) }.map(\.credentialId))
     return PersistentGraphQLPreflight(query: query, credentialIds: credentialIDs)
 }
 
@@ -785,6 +786,9 @@ private func persistentGraphQLNonBlankString(_ value: GatewayJSONValue?) -> Stri
 }
 
 private func persistentGraphQLAccountID(_ field: ValidatedOperation.RootField) -> String? {
+    if field.name == "account", case .string(let accountID) = field.arguments["id"] {
+        return accountID
+    }
     if case .string(let accountID) = field.arguments["accountId"] {
         return accountID
     }
@@ -793,34 +797,6 @@ private func persistentGraphQLAccountID(_ field: ValidatedOperation.RootField) -
         return nil
     }
     return accountID
-}
-
-private func persistentGraphQLEnvironment(
-    _ environment: [String: String],
-    config: GmailGatewayConfig?
-) -> [String: String] {
-    guard let config else {
-        return environment
-    }
-    var effectiveEnvironment = environment
-    if !config.accounts.contains(where: { $0.isFallback }) {
-        effectiveEnvironment["GMAIL_GATEWAY_CONFIG"] = config.configPath
-    }
-    for credential in config.credentials {
-        if let clientJSON = credential.oauthClientSecretJSON {
-            effectiveEnvironment[GmailGatewayConfigLoader.getCredentialJSONEnvVarName(
-                credentialId: credential.id,
-                valueKey: "oauth_client_secret_json"
-            )] = clientJSON
-        }
-        if let tokenJSON = credential.tokenStoreJSON {
-            effectiveEnvironment[GmailGatewayConfigLoader.getCredentialJSONEnvVarName(
-                credentialId: credential.id,
-                valueKey: "token_store_json"
-            )] = tokenJSON
-        }
-    }
-    return effectiveEnvironment
 }
 
 private final class LockedEnvelope: @unchecked Sendable {
