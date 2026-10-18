@@ -316,7 +316,11 @@ public struct GmailGatewayService {
         )).graphQLObject()
     }
 
-    public func getThread(accountId: String, threadId: String, includeFullDetails: Bool = true) throws -> Any {
+    public func getThread(accountId: String, threadId: String) throws -> Any {
+        try getThread(accountId: accountId, threadId: threadId, includeFullDetails: true)
+    }
+
+    func getThread(accountId: String, threadId: String, includeFullDetails: Bool) throws -> Any {
         let account = try requireAccount(accountId)
         let credential = try requireCredential(account.credentialId)
         return try providerAdapter.getThread(
