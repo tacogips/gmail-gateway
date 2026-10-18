@@ -14,6 +14,7 @@ struct GmailThreadListItem: Decodable {
 
 struct GmailAPIThread: Decodable {
     let id: String?
+    let historyId: String?
     let messages: [GmailAPIMessage]?
 }
 

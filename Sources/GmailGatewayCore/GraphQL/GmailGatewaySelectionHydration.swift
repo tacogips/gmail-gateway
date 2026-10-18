@@ -1,6 +1,7 @@
 import GatewaySDKKit
 
 enum GmailGatewaySelectionHydration {
+    private static let threadFullDetailsKey = "gmailGateway.thread.includeFullDetails"
     private static let threadsEdgesKey = "gmailGateway.threads.includeEdges"
     private static let threadsNodeDetailsKey = "gmailGateway.threads.includeNodeDetails"
     private static let threadsFullNodeDetailsKey = "gmailGateway.threads.includeFullNodeDetails"
@@ -19,6 +20,9 @@ enum GmailGatewaySelectionHydration {
         let threads = plan.threads
         let drafts = plan.drafts
         return [
+            threadFullDetailsKey: .bool(document.selectionSet.filter { $0.name == "thread" }.contains { root in
+                root.selectionSet.contains { !["id", "accountId", "providerMetadata", "__typename"].contains($0.name) }
+            }),
             threadsEdgesKey: .bool(threads.includeEdges),
             threadsNodeDetailsKey: .bool(threads.includeNodeDetails),
             threadsFullNodeDetailsKey: .bool(threads.includeFullNodeDetails),
@@ -45,6 +49,12 @@ enum GmailGatewaySelectionHydration {
             includeNodeDetails: includeNodeDetails,
             includeFullNodeDetails: includeFullNodeDetails
         )
+    }
+
+    static func threadIncludesFullDetails(in context: GatewayResolverContext) -> Bool {
+        // Merge aliases conservatively: a document selecting any full thread field
+        // keeps full hydration for every thread root. Version-only documents stay minimal.
+        bool(threadFullDetailsKey, in: context) ?? true
     }
 
     static func drafts(in context: GatewayResolverContext) -> DraftHydration {

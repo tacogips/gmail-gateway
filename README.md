@@ -51,6 +51,37 @@ Each binary exposes a strictly separate slice of the GraphQL surface:
 GraphQL is parsed, validated, authorized, and projected by the pinned
 `GatewaySDKKit` runtime. `GmailGatewaySchema.swift` is the executable schema source of
 truth; the legacy substring scanner and flat `threads(accountId: ...)` form are removed.
+
+For incremental readers, a thread query selecting only `id`, `accountId`, and
+`providerMetadata` uses Gmail's `format=minimal`: no message headers or bodies are
+downloaded. Compare the thread-level version with the version saved after the
+last successful content read:
+
+```graphql
+query ThreadVersion($account: ID!, $thread: ID!) {
+  thread(accountId: $account, threadId: $thread) {
+    id
+    providerMetadata { gmail { historyId } }
+  }
+}
+```
+
+`historyId` is the thread's own Gmail history ID, including changes from later
+replies; it is never inferred from the first message or snippet. A missing version
+or a failed metadata request must not be treated as unchanged. Fetch full content
+when the version differs or is missing, then save the version returned with that
+content. Selecting messages, subject, snippet, or labels keeps full hydration.
+Documents mixing full and minimal thread aliases conservatively hydrate all
+thread aliases fully, so send version checks separately from content queries.
+
+Candidate `threads` queries selecting only IDs, snippets, and history IDs remain
+list-only and preserve `pageInfo` pagination. Gmail generally omits history IDs
+from that list response; use the individual minimal thread query for a reliable
+version. A `profile { historyId }` query can guard an unchanged mailbox after a
+completed scan. Save its **pre-scan** version only after all list pages and required
+content reads succeed, so changes arriving during the scan trigger another scan.
+These checks use the existing read-only scope and do not depend on expiring
+Gmail history-list cursors.
 `threads` accepts exactly one required `input: ThreadSearchInput!` argument, and every
 mutation accepts one required input object.
 

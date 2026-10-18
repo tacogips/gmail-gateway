@@ -2,7 +2,7 @@ import Foundation
 
 protocol MailProviderAdapter {
     func searchThreads(_ request: GmailThreadSearchRequest) throws -> MailThreadConnection
-    func getThread(account: AccountConfig, credential: CredentialConfig, threadId: String) throws -> MailThread
+    func getThread(account: AccountConfig, credential: CredentialConfig, threadId: String, includeFullDetails: Bool) throws -> MailThread
     func getMessage(account: AccountConfig, credential: CredentialConfig, messageId: String) throws -> MailMessage
     func getMessageBodyFiles(credential: CredentialConfig, messageId: String) throws -> [GmailMessageBodyFile]
     func getAttachment(
@@ -146,8 +146,8 @@ struct GmailProviderAdapter: MailProviderAdapter {
         try reader.searchThreads(request)
     }
 
-    func getThread(account: AccountConfig, credential: CredentialConfig, threadId: String) throws -> MailThread {
-        try reader.getThread(account: account, credential: credential, threadId: threadId)
+    func getThread(account: AccountConfig, credential: CredentialConfig, threadId: String, includeFullDetails: Bool) throws -> MailThread {
+        try reader.getThread(account: account, credential: credential, threadId: threadId, includeFullDetails: includeFullDetails)
     }
 
     func getMessage(account: AccountConfig, credential: CredentialConfig, messageId: String) throws -> MailMessage {

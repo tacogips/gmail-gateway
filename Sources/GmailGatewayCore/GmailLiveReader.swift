@@ -53,7 +53,7 @@ struct GmailLiveReader {
             let node: MailThread?
             if request.includeNodeDetails {
                 if request.includeFullNodeDetails {
-                    let thread = try getThreadFull(
+                    let thread = try getGmailThread(
                         threadId: item.id,
                         account: request.account,
                         accessToken: accessToken
@@ -75,9 +75,9 @@ struct GmailLiveReader {
         )
     }
 
-    func getThread(account: AccountConfig, credential: CredentialConfig, threadId: String) throws -> MailThread {
+    func getThread(account: AccountConfig, credential: CredentialConfig, threadId: String, includeFullDetails: Bool = true) throws -> MailThread {
         let accessToken = try validGmailAccessToken(credential: credential, use: .read)
-        return try getThreadFull(threadId: threadId, account: account, accessToken: accessToken)
+        return try getGmailThread(threadId: threadId, account: account, accessToken: accessToken, includeFullDetails: includeFullDetails)
     }
 
     func getMessage(account: AccountConfig, credential: CredentialConfig, messageId: String) throws -> MailMessage {
@@ -427,9 +427,9 @@ private func getMessageFull(messageId: String, account: AccountConfig, accessTok
     return buildMailMessage(account: account, object: object)
 }
 
-private func getThreadFull(threadId: String, account: AccountConfig, accessToken: String) throws -> MailThread {
+private func getGmailThread(threadId: String, account: AccountConfig, accessToken: String, includeFullDetails: Bool = true) throws -> MailThread {
     var components = gmailURLComponents(path: "/gmail/v1/users/me/threads/\(urlPathEncode(threadId))")
-    components.queryItems = fullQueryItems()
+    components.queryItems = [URLQueryItem(name: "format", value: includeFullDetails ? "full" : "minimal")]
     let object = try getGmailObject(
         components: components,
         accessToken: accessToken,
@@ -438,7 +438,7 @@ private func getThreadFull(threadId: String, account: AccountConfig, accessToken
     )
     let messages = (object.messages ?? [])
         .map { buildMailMessage(account: account, object: $0) }
-    return buildThread(account: account, threadId: object.id ?? threadId, messages: messages)
+    return buildThread(account: account, threadId: object.id ?? threadId, historyId: nonBlank(object.historyId), messages: messages)
 }
 
 private func getGmailMessageObject(messageId: String, accessToken: String) throws -> GmailAPIMessage {
@@ -452,7 +452,7 @@ private func getGmailMessageObject(messageId: String, accessToken: String) throw
     )
 }
 
-private func buildThread(account: AccountConfig, threadId: String, messages: [MailMessage]) -> MailThread {
+private func buildThread(account: AccountConfig, threadId: String, historyId: String?, messages: [MailMessage]) -> MailThread {
     let labels = uniqueStrings(messages.flatMap(\.labels))
     return MailThread(
         id: threadId,
@@ -468,7 +468,7 @@ private func buildThread(account: AccountConfig, threadId: String, messages: [Ma
             attachmentId: nil,
             partId: nil,
             labelIds: labels,
-            historyId: messages.first?.historyId
+            historyId: historyId
         ))
     )
 }

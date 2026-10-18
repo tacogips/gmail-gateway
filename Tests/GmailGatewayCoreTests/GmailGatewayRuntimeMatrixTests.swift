@@ -466,7 +466,8 @@ struct RootInvocation {
         }
         switch name {
         case "threads": return [effect("GET", expectedPath, "?maxResults=1&labelIds=INBOX")]
-        case "thread", "message", "messageFileSet", "attachment", "draft":
+        case "thread": return [effect("GET", expectedPath, "?format=minimal")]
+        case "message", "messageFileSet", "attachment", "draft":
             return [effect("GET", expectedPath, "?format=full")]
         case "drafts": return [effect("GET", expectedPath, "?maxResults=1")]
         case "createReplyDraft":
