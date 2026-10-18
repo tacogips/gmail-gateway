@@ -229,6 +229,7 @@ public struct AccountConfig: Sendable {
 }
 
 public struct GmailGatewayConfig: Sendable {
+    public var writeRetry: GmailWriteRetryPolicy = .default
     public let configPath: String
     public let storage: StorageConfig
     public let credentials: [CredentialConfig]
@@ -243,7 +244,7 @@ public struct GmailGatewayService {
     let providerAdapter: MailProviderAdapter
 
     public init(config: GmailGatewayConfig) {
-        self.init(config: config, providerAdapter: GmailProviderAdapter())
+        self.init(config: config, providerAdapter: GmailProviderAdapter(writeRetry: config.writeRetry))
     }
 
     init(config: GmailGatewayConfig, providerAdapter: MailProviderAdapter) {

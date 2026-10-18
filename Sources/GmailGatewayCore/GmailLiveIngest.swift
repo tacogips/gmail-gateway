@@ -4,6 +4,7 @@ import Foundation
 /// RFC 822 mail to the mailbox without sending it, so they are reachable only through
 /// `gmail-gateway-message-box`.
 struct GmailLiveIngest {
+    var writeRetry: GmailWriteRetryPolicy = .default
     func importMessage(
         account: AccountConfig,
         credential: CredentialConfig,
@@ -51,6 +52,7 @@ struct GmailLiveIngest {
             body["labelIds"] = input.labelIds
         }
         let object = try postGmailJSONObject(
+            retryPolicy: writeRetry,
             path: path,
             accessToken: accessToken,
             body: body,

@@ -6,6 +6,7 @@ import FoundationNetworking
 private let gmailRawMessageSizeLimitBytes = 25 * 1_024 * 1_024
 
 struct GmailLiveWriter {
+    var writeRetry: GmailWriteRetryPolicy = .default
     func createDraft(
         account: AccountConfig,
         credential: CredentialConfig,
@@ -24,6 +25,7 @@ struct GmailLiveWriter {
             draftMessage["threadId"] = threadId
         }
         let object = try postGmailJSONObject(
+            retryPolicy: writeRetry,
             path: "/gmail/v1/users/me/drafts",
             accessToken: accessToken,
             body: ["message": draftMessage],
@@ -60,6 +62,7 @@ struct GmailLiveWriter {
             sendBody["threadId"] = threadId
         }
         let object = try postGmailJSONObject(
+            retryPolicy: writeRetry,
             path: "/gmail/v1/users/me/messages/send",
             accessToken: accessToken,
             body: sendBody,
@@ -86,6 +89,7 @@ struct GmailLiveWriter {
     ) throws -> MailWriteResult {
         let accessToken = try validGmailAccessToken(credential: credential, use: .draftSend)
         let object = try postGmailJSONObject(
+            retryPolicy: writeRetry,
             path: "/gmail/v1/users/me/drafts/send",
             accessToken: accessToken,
             body: ["id": draftId],

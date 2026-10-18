@@ -8,6 +8,7 @@ private let gmailLabelsPath = "/gmail/v1/users/me/labels"
 /// management. These change stored mail rather than composing or sending it, so they are
 /// reachable only through `gmail-gateway-threads`.
 struct GmailLiveMailbox {
+    var writeRetry: GmailWriteRetryPolicy = .default
     // MARK: - Label changes on stored mail
 
     func modifyThreadLabels(
@@ -18,6 +19,7 @@ struct GmailLiveMailbox {
         removeLabelIds: [String]
     ) throws -> MailboxMutationResult {
         let object = try postGmailJSONObject(
+            retryPolicy: writeRetry,
             path: "\(gmailThreadsPath)/\(urlPathEncode(threadId))/modify",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
             body: labelChangeBody(addLabelIds: addLabelIds, removeLabelIds: removeLabelIds),
@@ -41,6 +43,7 @@ struct GmailLiveMailbox {
         removeLabelIds: [String]
     ) throws -> MailboxMutationResult {
         let object = try postGmailJSONObject(
+            retryPolicy: writeRetry,
             path: "\(gmailMessagesPath)/\(urlPathEncode(messageId))/modify",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
             body: labelChangeBody(addLabelIds: addLabelIds, removeLabelIds: removeLabelIds),
@@ -65,6 +68,7 @@ struct GmailLiveMailbox {
         var body = labelChangeBody(addLabelIds: addLabelIds, removeLabelIds: removeLabelIds)
         body["ids"] = messageIds
         try postGmailJSONNoContent(
+            retryPolicy: writeRetry,
             path: "\(gmailMessagesPath)/batchModify",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
             body: body,
@@ -88,6 +92,7 @@ struct GmailLiveMailbox {
         trashed: Bool
     ) throws -> MailboxMutationResult {
         let object = try postGmailBodylessJSONObject(
+            retryPolicy: writeRetry,
             path: "\(gmailThreadsPath)/\(urlPathEncode(threadId))/\(trashed ? "trash" : "untrash")",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
             context: trashed ? "Gmail thread trash failed" : "Gmail thread untrash failed"
@@ -109,6 +114,7 @@ struct GmailLiveMailbox {
         trashed: Bool
     ) throws -> MailboxMutationResult {
         let object = try postGmailBodylessJSONObject(
+            retryPolicy: writeRetry,
             path: "\(gmailMessagesPath)/\(urlPathEncode(messageId))/\(trashed ? "trash" : "untrash")",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
             context: trashed ? "Gmail message trash failed" : "Gmail message untrash failed"
@@ -130,6 +136,7 @@ struct GmailLiveMailbox {
         threadId: String
     ) throws -> MailboxMutationResult {
         try deleteGmailResource(
+            retryPolicy: writeRetry,
             path: "\(gmailThreadsPath)/\(urlPathEncode(threadId))",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxDelete),
             context: "Gmail thread deletion failed"
@@ -149,6 +156,7 @@ struct GmailLiveMailbox {
         messageId: String
     ) throws -> MailboxMutationResult {
         try deleteGmailResource(
+            retryPolicy: writeRetry,
             path: "\(gmailMessagesPath)/\(urlPathEncode(messageId))",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxDelete),
             context: "Gmail message deletion failed"
@@ -168,6 +176,7 @@ struct GmailLiveMailbox {
         messageIds: [String]
     ) throws -> MailboxMutationResult {
         try postGmailJSONNoContent(
+            retryPolicy: writeRetry,
             path: "\(gmailMessagesPath)/batchDelete",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxDelete),
             body: ["ids": messageIds],
@@ -190,6 +199,7 @@ struct GmailLiveMailbox {
         input: LabelWriteInput
     ) throws -> MailboxMutationResult {
         let object = try postGmailJSONObject(
+            retryPolicy: writeRetry,
             path: gmailLabelsPath,
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
             body: input.providerBody(),
@@ -206,6 +216,7 @@ struct GmailLiveMailbox {
     ) throws -> MailboxMutationResult {
         // PATCH rather than PUT so an update that names only one field does not clear the rest.
         let object = try patchGmailJSONObject(
+            retryPolicy: writeRetry,
             path: "\(gmailLabelsPath)/\(urlPathEncode(labelId))",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
             body: input.providerBody(),
@@ -226,6 +237,7 @@ struct GmailLiveMailbox {
         labelId: String
     ) throws -> MailboxMutationResult {
         try deleteGmailResource(
+            retryPolicy: writeRetry,
             path: "\(gmailLabelsPath)/\(urlPathEncode(labelId))",
             accessToken: try validGmailAccessToken(credential: credential, use: .mailboxModify),
             context: "Gmail label deletion failed"

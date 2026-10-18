@@ -62,6 +62,7 @@ func getGmailData(
 }
 
 func postGmailJSONObject(
+    retryPolicy: GmailWriteRetryPolicy = .default,
     path: String,
     accessToken: String,
     body: [String: Any],
@@ -69,6 +70,7 @@ func postGmailJSONObject(
     queryItems: [URLQueryItem] = []
 ) throws -> [String: Any] {
     try gmailJSONObject(
+        retryPolicy: retryPolicy,
         method: "POST",
         path: path,
         accessToken: accessToken,
@@ -81,6 +83,7 @@ func postGmailJSONObject(
 
 /// POSTs without a request entity when Gmail requires an empty mutation body.
 func postGmailBodylessJSONObject(
+    retryPolicy: GmailWriteRetryPolicy = .default,
     path: String,
     accessToken: String,
     context: String,
@@ -93,16 +96,18 @@ func postGmailBodylessJSONObject(
         queryItems: queryItems
     )
     request.setValue(nil, forHTTPHeaderField: "Content-Type")
-    return try gmailMutationJSONObject(request, context: context)
+    return try gmailMutationJSONObject(request, context: context, retryPolicy: retryPolicy)
 }
 
 func putGmailJSONObject(
+    retryPolicy: GmailWriteRetryPolicy = .default,
     path: String,
     accessToken: String,
     body: [String: Any],
     context: String
 ) throws -> [String: Any] {
     try gmailJSONObject(
+        retryPolicy: retryPolicy,
         method: "PUT",
         path: path,
         accessToken: accessToken,
@@ -113,12 +118,14 @@ func putGmailJSONObject(
 }
 
 func patchGmailJSONObject(
+    retryPolicy: GmailWriteRetryPolicy = .default,
     path: String,
     accessToken: String,
     body: [String: Any],
     context: String
 ) throws -> [String: Any] {
     try gmailJSONObject(
+        retryPolicy: retryPolicy,
         method: "PATCH",
         path: path,
         accessToken: accessToken,
@@ -130,6 +137,7 @@ func patchGmailJSONObject(
 
 /// POSTs a JSON body to an endpoint that answers with an empty body (Gmail batch mutations).
 func postGmailJSONNoContent(
+    retryPolicy: GmailWriteRetryPolicy = .default,
     path: String,
     accessToken: String,
     body: [String: Any],
@@ -137,20 +145,22 @@ func postGmailJSONNoContent(
 ) throws {
     var request = try gmailJSONRequest(method: "POST", path: path, accessToken: accessToken)
     request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
-    _ = try performGmailHTTPRequest(request, context: context, effect: .gmailMutation)
+    _ = try performGmailHTTPRequest(request, context: context, effect: .gmailMutation, retryPolicy: retryPolicy)
 }
 
 func deleteGmailResource(
+    retryPolicy: GmailWriteRetryPolicy = .default,
     path: String,
     accessToken: String,
     context: String
 ) throws {
     var request = try gmailJSONRequest(method: "DELETE", path: path, accessToken: accessToken)
     request.setValue(nil, forHTTPHeaderField: "Content-Type")
-    _ = try performGmailHTTPRequest(request, context: context, effect: .gmailMutation)
+    _ = try performGmailHTTPRequest(request, context: context, effect: .gmailMutation, retryPolicy: retryPolicy)
 }
 
 private func gmailJSONObject(
+    retryPolicy: GmailWriteRetryPolicy,
     method: String,
     path: String,
     accessToken: String,
@@ -166,15 +176,16 @@ private func gmailJSONObject(
         queryItems: queryItems
     )
     request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
-    return try gmailMutationJSONObject(request, context: context, effect: effect)
+    return try gmailMutationJSONObject(request, context: context, effect: effect, retryPolicy: retryPolicy)
 }
 
 private func gmailMutationJSONObject(
     _ request: URLRequest,
     context: String,
-    effect: GmailHTTPRequestEffect = .gmailMutation
+    effect: GmailHTTPRequestEffect = .gmailMutation,
+    retryPolicy: GmailWriteRetryPolicy
 ) throws -> [String: Any] {
-    let response = try performGmailHTTPRequest(request, context: context, effect: effect)
+    let response = try performGmailHTTPRequest(request, context: context, effect: effect, retryPolicy: retryPolicy)
     // A received 2xx is definitive for a Gmail mutation. Gmail may acknowledge an
     // irreversible write with an empty or truncated entity, so preserve success and
     // let the owning result mapper use its stable fallback identifiers.

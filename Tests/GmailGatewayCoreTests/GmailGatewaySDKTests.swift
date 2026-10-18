@@ -421,9 +421,10 @@ extension GmailRequestProtocolTests {
                     return
                 }
                 #expect(failedMutationData["sendMessage"] == .null)
-                #expect(failedMutationResult.errors.map(\.code) == [GmailGatewayErrorCode.providerApiError.rawValue])
+                let expectedCode: GmailGatewayErrorCode = statusCode >= 500 ? .mutationOutcomeUnknown : .providerApiError
+                #expect(failedMutationResult.errors.map(\.code) == [expectedCode.rawValue])
                 #expect(!failedMutationResult.errors.map(\.code).contains(GmailGatewayErrorCode.cancelled.rawValue))
-                #expect(!failedMutationResult.errors.map(\.code).contains(GmailGatewayErrorCode.mutationOutcomeUnknown.rawValue))
+                #expect(failedMutationResult.errors.map(\.code).contains(GmailGatewayErrorCode.mutationOutcomeUnknown.rawValue) == (statusCode >= 500))
                 #expect(GatewayRuntimeURLProtocol.requests.count == 1)
                 #expect(GatewayRuntimeURLProtocol.requests.first?.method == "POST")
                 #expect(GatewayRuntimeURLProtocol.requests.first?.url.hasSuffix("/gmail/v1/users/me/messages/send") == true)
@@ -617,7 +618,7 @@ extension GmailRequestProtocolTests {
                 #expect(GatewayRuntimeURLProtocol.requests.first?.method == "POST")
                 #expect(GatewayRuntimeURLProtocol.requests.first?.url.hasSuffix("/gmail/v1/users/me/messages/send") == true)
                 #expect(!result.errors.map(\.code).contains(GmailGatewayErrorCode.cancelled.rawValue))
-                #expect(!result.errors.map(\.code).contains(GmailGatewayErrorCode.mutationOutcomeUnknown.rawValue))
+                #expect(result.errors.map(\.code).contains(GmailGatewayErrorCode.mutationOutcomeUnknown.rawValue) == (statusCode >= 500))
 
                 if statusCode == 200 {
                     #expect(result.exitCode == 0)
@@ -630,7 +631,8 @@ extension GmailRequestProtocolTests {
                         return
                     }
                     #expect(data["sendMessage"] == .null)
-                    #expect(result.errors.map(\.code) == [GmailGatewayErrorCode.providerApiError.rawValue])
+                    let expectedCode: GmailGatewayErrorCode = statusCode >= 500 ? .mutationOutcomeUnknown : .providerApiError
+                    #expect(result.errors.map(\.code) == [expectedCode.rawValue])
                 }
             }
         }

@@ -476,3 +476,22 @@ CLI authentication does not read, migrate, or write Keychain. Existing Keychain
 profiles require a new file-based login/setup. Explicit SDK store injection
 remains available. Manual authorization URLs are printed without requiring an
 interactive terminal, so remote deployment can use a browser on another device.
+
+
+## Configurable write retries
+
+Writes now default to an initial wait of 2 seconds and at most 3 retries after the first attempt. Configure the budget in TOML:
+
+```toml
+[write_retry]
+initial_wait_seconds = 2
+max_retries = 3
+```
+
+`initial_wait_seconds` accepts integers 1–60; `max_retries` accepts 0–5 and excludes the first attempt. Set 0 to disable retries. The waits are `min(n * 2^retryIndex, 60)` seconds (default 2, 4, 8). Explicit supplied environment variables `GMAIL_GATEWAY_WRITE_RETRY_INITIAL_WAIT_SECONDS` and `GMAIL_GATEWAY_WRITE_RETRY_MAX_RETRIES` override the corresponding TOML values. SDK callers can set the validated `GmailWriteRetryPolicy` value on `config.writeRetry`; no process-wide retry state is used.
+
+Each individual write retries only definite rejection (HTTP 429 or HTTP 403 with documented `rateLimitExceeded`/`userRateLimitExceeded`) or a proven DNS/connect-before-HTTP failure. Permission/authentication/validation failures and daily-limit 403 responses are terminal. Mutation redirects are not followed, preventing a redirected connection failure from replaying an earlier write. A valid `Retry-After` minimum is honored; a minimum above 60 seconds stops retries instead of sending earlier. Unknown header/provider strings are never copied into errors.
+
+A timeout, lost connection after dispatch, or server 5xx can mean the write already happened. Such cases return `MUTATION_OUTCOME_UNKNOWN` and are never resent automatically, even when an event/draft ID exists. Check provider state before choosing another write. A confirmed 2xx is never replayed because decoding or subsequent readback failed. The budget applies per mutation request, not to an entire GraphQL document, OAuth bootstrap, or read operation. Sending mail, modifying labels/drafts, and ingesting messages retain their existing permission boundaries.
+
+SDK callers may wrap a write in `GmailWriteExecutionContext.withDeadline(deadline, operation:)` (sync or async). The scoped deadline is checked before attempts and during backoff; nested calls cannot extend it. An already dispatched write is allowed to return its definitive result, and expiry never authorizes replay.

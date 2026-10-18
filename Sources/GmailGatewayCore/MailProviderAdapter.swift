@@ -137,10 +137,17 @@ protocol MailProviderAdapter {
 
 struct GmailProviderAdapter: MailProviderAdapter {
     private let reader = GmailLiveReader()
-    private let writer = GmailLiveWriter()
-    private let drafts = GmailLiveDrafts()
-    private let mailbox = GmailLiveMailbox()
-    private let ingest = GmailLiveIngest()
+    private let writer: GmailLiveWriter
+    private let drafts: GmailLiveDrafts
+    private let mailbox: GmailLiveMailbox
+    private let ingest: GmailLiveIngest
+
+    init(writeRetry: GmailWriteRetryPolicy = .default) {
+        writer = GmailLiveWriter(writeRetry: writeRetry)
+        drafts = GmailLiveDrafts(writeRetry: writeRetry)
+        mailbox = GmailLiveMailbox(writeRetry: writeRetry)
+        ingest = GmailLiveIngest(writeRetry: writeRetry)
+    }
 
     func searchThreads(_ request: GmailThreadSearchRequest) throws -> MailThreadConnection {
         try reader.searchThreads(request)

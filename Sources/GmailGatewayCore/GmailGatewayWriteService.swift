@@ -229,7 +229,7 @@ public struct GmailGatewayWriteService {
     let providerAdapter: MailProviderAdapter
 
     public init(config: GmailGatewayConfig) {
-        self.init(config: config, providerAdapter: GmailProviderAdapter())
+        self.init(config: config, providerAdapter: GmailProviderAdapter(writeRetry: config.writeRetry))
     }
 
     init(config: GmailGatewayConfig, providerAdapter: MailProviderAdapter) {

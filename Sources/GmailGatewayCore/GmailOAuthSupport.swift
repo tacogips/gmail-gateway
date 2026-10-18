@@ -181,12 +181,15 @@ enum GmailHTTPRequestEffect: Equatable {
 func performGmailHTTPRequest(
     _ request: URLRequest,
     context: String,
-    effect: GmailHTTPRequestEffect = .safeToCancel
+    effect: GmailHTTPRequestEffect = .safeToCancel,
+    retryPolicy: GmailWriteRetryPolicy = .default,
+    sleep: (TimeInterval) throws -> Void = gmailWriteRetrySleep
 ) throws -> (data: Data, response: HTTPURLResponse) {
-    let maxAttempts = gmailHTTPMaxAttempts(for: request)
+    let maxAttempts = effect == .gmailMutation ? retryPolicy.maxRetries + 1 : gmailHTTPMaxAttempts(for: request)
     let mutationMayHaveIrreversibleEffect = effect == .gmailMutation
     var attempt = 1
     while true {
+        if effect == .gmailMutation { try GmailWriteExecutionContext.check() }
         try GmailGatewayProviderCancellationContext.throwIfCancelled()
         try GmailGatewayProviderAttemptBudgetContext.consumeAttempt()
         let resolved: (data: Data, response: HTTPURLResponse)
@@ -199,6 +202,14 @@ func performGmailHTTPRequest(
                 requestWasDispatched: &requestWasDispatched
             )
         } catch {
+            if let failure = error as? GmailWriteNotDispatched {
+                if attempt < maxAttempts {
+                    try sleep(retryPolicy.delay(retryIndex: attempt - 1))
+                    attempt += 1
+                    continue
+                }
+                throw failure.error
+            }
             if mutationMayHaveIrreversibleEffect,
                requestWasDispatched {
                 throw GmailGatewayError(
@@ -213,6 +224,17 @@ func performGmailHTTPRequest(
             return resolved
         }
         if mutationMayHaveIrreversibleEffect {
+            if gmailWriteWasRateLimited(status: resolved.response.statusCode, data: resolved.data), attempt < maxAttempts,
+               let delay = gmailWriteRetryDelay(policy: retryPolicy, retryIndex: attempt - 1, response: resolved.response) {
+                try sleep(delay)
+                attempt += 1
+                continue
+            }
+            if (500...599).contains(resolved.response.statusCode) {
+                throw GmailGatewayError("Gmail mutation outcome is unknown after a server error; do not replay automatically",
+                    code: .mutationOutcomeUnknown, exitCode: .graphqlExecutionError,
+                    details: ["httpStatus": String(resolved.response.statusCode)])
+            }
             throw gmailProviderHTTPError(context: context, response: resolved.response, data: resolved.data)
         }
         try GmailGatewayProviderCancellationContext.throwIfCancelled()
@@ -254,6 +276,7 @@ private func performSingleGmailHTTPRequest(
             exitCode: .providerApiError
         )))
     }
+    if !cancelsWhenExecutionIsCancelled { task.delegate = GmailWriteRedirectBlocker() }
     let cancellationIdentifier = try GmailGatewayProviderCancellationContext.start(
         task,
         cancelsWhenExecutionIsCancelled: cancelsWhenExecutionIsCancelled
@@ -288,6 +311,10 @@ private func performSingleGmailHTTPRequest(
     } catch let error as GmailGatewayError {
         throw error
     } catch {
+        if !cancelsWhenExecutionIsCancelled, gmailWriteFailedBeforeConnection(error) {
+            throw GmailWriteNotDispatched(error: GmailGatewayError("Gmail write could not connect",
+                code: .providerApiError, exitCode: .providerApiError))
+        }
         throw GmailGatewayError(
             context,
             code: .providerApiError,

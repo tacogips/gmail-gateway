@@ -3,6 +3,7 @@ import Foundation
 private let gmailDraftsPath = "/gmail/v1/users/me/drafts"
 
 struct GmailLiveDrafts {
+    var writeRetry: GmailWriteRetryPolicy = .default
     func listDrafts(
         account: AccountConfig,
         credential: CredentialConfig,
@@ -84,6 +85,7 @@ struct GmailLiveDrafts {
             draftMessage["threadId"] = threadId
         }
         let object = try putGmailJSONObject(
+            retryPolicy: writeRetry,
             path: "\(gmailDraftsPath)/\(urlPathEncode(draftId))",
             accessToken: accessToken,
             body: ["id": draftId, "message": draftMessage],
@@ -109,6 +111,7 @@ struct GmailLiveDrafts {
     ) throws -> MailWriteResult {
         let accessToken = try validGmailAccessToken(credential: credential, use: .draftDelete)
         try deleteGmailResource(
+            retryPolicy: writeRetry,
             path: "\(gmailDraftsPath)/\(urlPathEncode(draftId))",
             accessToken: accessToken,
             context: "Gmail draft deletion failed"
