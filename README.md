@@ -52,6 +52,10 @@ GraphQL is parsed, validated, authorized, and projected by the pinned
 `GatewaySDKKit` runtime. `GmailGatewaySchema.swift` is the executable schema source of
 truth; the legacy substring scanner and flat `threads(accountId: ...)` form are removed.
 
+Provider failures retain optional numeric `errors[].extensions.httpStatus` (100–599)
+and `providerErrorCode` (0–99999) through SDK and CLI output. Arbitrary provider
+details, response bodies, and credential values are not added to these extensions.
+
 For incremental readers, a thread query selecting only `id`, `accountId`, and
 `providerMetadata` uses Gmail's `format=minimal`: no message headers or bodies are
 downloaded. Compare the thread-level version with the version saved after the

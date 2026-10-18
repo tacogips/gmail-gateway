@@ -1,4 +1,5 @@
 import Foundation
+import GatewaySDKKit
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -713,6 +714,36 @@ struct GmailRequestProtocolTests {
             }
             #expect(error.code == .providerRateLimited)
             #expect(error.exitCode == .providerApiError)
+        }
+    }
+
+    @Test func graphQLProviderFailureRetainsOnlyNumericDiagnosticsThroughCLIOutput() async throws {
+        TestGmailRequestCaptureProtocol.reset()
+        TestGmailRequestCaptureProtocol.responseStatusCode = 403
+        TestGmailRequestCaptureProtocol.responseData = Data(
+            #"{"error":{"code":403,"message":"SECRET_BODY","status":"SECRET_STATUS","errors":[{"reason":"SECRET_REASON"}]}}"#.utf8
+        )
+        URLProtocol.registerClass(TestGmailRequestCaptureProtocol.self)
+        defer {
+            URLProtocol.unregisterClass(TestGmailRequestCaptureProtocol.self)
+            TestGmailRequestCaptureProtocol.reset()
+        }
+        let paths = temporaryConfigPaths()
+        defer { try? FileManager.default.removeItem(atPath: paths.root) }
+        let config = testConfig(paths: paths, tokenStoreJSON: readableTokenStoreJSON)
+        let envelope = await GmailGatewayGraphQLExecutor(configuration: config).run(
+            query: #"{ failedProfile: profile(accountId: "personal") { messagesTotal } }"#,
+            mode: .reader, environment: [:]
+        )
+        let error = try #require(envelope.errors.first)
+        #expect(error.code == "PROVIDER_API_ERROR")
+        #expect(error.path == ["failedProfile"])
+        #expect(error.diagnostics == .init(httpStatus: 403, providerErrorCode: 403))
+        for pretty in [false, true] {
+            let output = try GmailGatewayGraphQLEnvelopeSerializer.output(envelope, pretty: pretty)
+            #expect(!output.contains("SECRET"))
+            let reparsed = GatewayEnvelope(parsingCLIOutput: output, exitCode: envelope.exitCode)
+            #expect(reparsed.errors == envelope.errors)
         }
     }
 

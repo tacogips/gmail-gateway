@@ -711,7 +711,7 @@ private func persistentGraphQLErrorResult(
     pretty: Bool
 ) -> GmailGatewayCommandResult {
     let envelope = GatewayEnvelope(
-        errors: [GatewayEnvelopeError(message: error.message, code: error.code.rawValue)],
+        errors: [GatewayEnvelopeError(message: error.message, code: error.code.rawValue, diagnostics: error.gatewayDiagnostics)],
         exitCode: GmailGatewayExitCode.graphqlExecutionError.rawValue
     )
     let stdout = (try? GmailGatewayGraphQLEnvelopeSerializer.output(envelope, pretty: pretty)) ?? ""

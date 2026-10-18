@@ -6,6 +6,7 @@ import GatewaySDKKit
 struct GmailRuntimeResolverError: GatewayResolverError {
     let code: String
     let message: String
+    let diagnostics: GatewayErrorDiagnostics?
 }
 
 enum GmailGatewayResolvers {
@@ -141,8 +142,8 @@ private func normalize(_ value: GatewayJSONValue) -> GatewayJSONValue {
     }
 }
 private func resolverError(_ error: Error) -> GmailRuntimeResolverError {
-    if let gmail = error as? GmailGatewayError { return .init(code: gmail.code.rawValue, message: gmail.message) }
-    return .init(code: "RESOLVER_ERROR", message: "resolver failed")
+    if let gmail = error as? GmailGatewayError { return .init(code: gmail.code.rawValue, message: gmail.message, diagnostics: gmail.gatewayDiagnostics) }
+    return .init(code: "RESOLVER_ERROR", message: "resolver failed", diagnostics: nil)
 }
 private func object(_ arguments: [String: GatewayJSONValue], _ name: String) -> [String: GatewayJSONValue] { if case .object(let value) = arguments[name] { return value }; return [:] }
 private func string(_ arguments: [String: GatewayJSONValue], _ name: String) -> String { if case .string(let value) = arguments[name] { return value }; return "" }

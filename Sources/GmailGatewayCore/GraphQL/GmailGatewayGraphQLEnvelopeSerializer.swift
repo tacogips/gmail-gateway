@@ -20,6 +20,7 @@ enum GmailGatewayGraphQLEnvelopeSerializer {
             var value: [String: GatewayJSONValue] = ["message": .string(error.message)]
             if let code = error.code { value["code"] = .string(code) }
             if let path = error.path { value["path"] = .array(path.map(GatewayJSONValue.string)) }
+            if let diagnostics = error.diagnostics, !diagnostics.isEmpty { value["extensions"] = diagnostics.jsonValue }
             return .object(value)
         }
         var body: [String: GatewayJSONValue] = [
