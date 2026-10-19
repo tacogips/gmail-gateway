@@ -86,6 +86,9 @@ private enum GmailGatewayAcceptedCatalogContract {
         "thread|query|reader|accountId:ID!:required=true:default=-;threadId:ID!:required=true:default=-|MailThread|Fetch one mail thread.|false",
         "message|query|reader|accountId:ID!:required=true:default=-;messageId:ID!:required=true:default=-|MailMessage|Fetch one mail message.|false",
         "messageFileSet|query|reader|accountId:ID!:required=true:default=-;messageId:ID!:required=true:default=-|MailMessageFileSet!|List materialized message files.|false",
+        "messageIds|query|reader|accountId:ID!:required=true:default=-;query:String!:required=true:default=-;first:Int:required=false:default=-;after:String:required=false:default=-;includeSpamTrash:Boolean:required=false:default=-|GmailMessageIdPage!|List message IDs without hydration; cursor is account/query bound.|false",
+        "messagePartBytes|query|reader|accountId:ID!:required=true:default=-;messageId:ID!:required=true:default=-;partId:String!:required=true:default=-;maxBytes:Int:required=false:default=-|GmailMessagePartBytes!|Read exact inline filename part bytes with a maximum 20 MiB decoded bound.|false",
+        "attachmentBytes|query|reader|accountId:ID!:required=true:default=-;messageId:ID!:required=true:default=-;attachmentId:ID!:required=true:default=-;maxBytes:Int:required=false:default=-|GmailAttachmentBytes!|Read attachment bytes in memory with a maximum 20 MiB decoded bound.|false",
         "attachment|query|reader|accountId:ID!:required=true:default=-;messageId:ID!:required=true:default=-;attachmentId:ID!:required=true:default=-|MailAttachment|Fetch attachment metadata.|false",
         "labels|query|reader|accountId:ID!:required=true:default=-|[MailLabel!]!|List mailbox labels.|false",
         "profile|query|reader|accountId:ID!:required=true:default=-|MailProfile!|Fetch mailbox profile.|false",
@@ -119,6 +122,10 @@ private enum GmailGatewayAcceptedCatalogContract {
 
     static let namedTypes = [
         "DateTime|scalar",
+        "GmailMessageId|object|id:ID![];threadId:ID![]",
+        "GmailMessageIdPage|object|messages:[GmailMessageId!]![];pageInfo:PageInfo![];resultSizeEstimate:Int[]",
+        "GmailMessagePartBytes|object|accountId:ID![];messageId:ID![];partId:String![];dataBase64:String![];byteCount:Int![];sha256:String![]",
+        "GmailAttachmentBytes|object|accountId:ID![];messageId:ID![];attachmentId:ID![];dataBase64:String![];byteCount:Int![];sha256:String![]",
         "MailAddress|object|address:String![];raw:String![]",
         "MailAccount|object|id:ID![];provider:MailProvider![];emailAddress:String![];isFallback:Boolean![];capabilities:MailCapabilities![]",
         "MailCapabilities|object|canRead:Boolean![];canSend:Boolean![];configuredAccessMode:AccessMode![];authState:AuthState![];isFallback:Boolean![]",

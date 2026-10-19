@@ -35,6 +35,22 @@ enum GmailGatewayResolvers {
         "thread": { args, context in try value(GmailGatewayService(config: try config(context)).getThread(accountId: string(args, "accountId"), threadId: string(args, "threadId"), includeFullDetails: GmailGatewaySelectionHydration.threadIncludesFullDetails(in: context))) },
         "message": { args, context in try value(GmailGatewayService(config: try config(context)).getMessage(accountId: string(args, "accountId"), messageId: string(args, "messageId"))) },
         "messageFileSet": { args, context in try value(GmailGatewayService(config: try config(context)).getMessageFileSet(accountId: string(args, "accountId"), messageId: string(args, "messageId"))) },
+        "messageIds": { args, context in
+            try value(GmailGatewayService(config: try config(context)).messageIds(
+                accountId: string(args, "accountId"), query: string(args, "query"),
+                first: optionalInt(args, "first") ?? 50, after: optionalString(args, "after"),
+                includeSpamTrash: bool(args, "includeSpamTrash")))
+        },
+        "messagePartBytes": { args, context in
+            try value(GmailGatewayService(config: try config(context)).messagePartBytes(
+                accountId: string(args, "accountId"), messageId: string(args, "messageId"),
+                partId: string(args, "partId"), maxBytes: optionalInt(args, "maxBytes") ?? 20 * 1024 * 1024))
+        },
+        "attachmentBytes": { args, context in
+            try value(GmailGatewayService(config: try config(context)).attachmentBytes(
+                accountId: string(args, "accountId"), messageId: string(args, "messageId"),
+                attachmentId: string(args, "attachmentId"), maxBytes: optionalInt(args, "maxBytes") ?? 20 * 1024 * 1024))
+        },
         "attachment": { args, context in try value(GmailGatewayService(config: try config(context)).getAttachment(accountId: string(args, "accountId"), messageId: string(args, "messageId"), attachmentId: string(args, "attachmentId"))) },
         "labels": { args, context in try value(GmailGatewayService(config: try config(context)).listLabels(accountId: string(args, "accountId"))) },
         "profile": { args, context in try value(GmailGatewayService(config: try config(context)).getProfile(accountId: string(args, "accountId"))) },

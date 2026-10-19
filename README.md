@@ -495,3 +495,23 @@ Each individual write retries only definite rejection (HTTP 429 or HTTP 403 with
 A timeout, lost connection after dispatch, or server 5xx can mean the write already happened. Such cases return `MUTATION_OUTCOME_UNKNOWN` and are never resent automatically, even when an event/draft ID exists. Check provider state before choosing another write. A confirmed 2xx is never replayed because decoding or subsequent readback failed. The budget applies per mutation request, not to an entire GraphQL document, OAuth bootstrap, or read operation. Sending mail, modifying labels/drafts, and ingesting messages retain their existing permission boundaries.
 
 SDK callers may wrap a write in `GmailWriteExecutionContext.withDeadline(deadline, operation:)` (sync or async). The scoped deadline is checked before attempts and during backoff; nested calls cannot extend it. An already dispatched write is allowed to return its definitive result, and expiry never authorizes replay.
+
+### Bounded message archive reads
+
+The reader exposes `messageIds(accountId, query, first, after, includeSpamTrash)`
+for metadata-only pagination across all matching history. `query` is required
+but may be empty; no implicit date, INBOX, or thread filter is added. `first`
+defaults to 50 and must be 1–100. The returned `pageInfo.endCursor` is opaque and
+bound to account configuration, query, page size, and spam/trash selection.
+Changing any of these requires a fresh scan. Pages are not a mailbox snapshot:
+callers must deduplicate IDs and fence their own checkpoint using `profile`.
+
+`attachmentBytes(accountId, messageId, attachmentId, maxBytes)` returns exact
+`dataBase64`, `byteCount`, `sha256`, and the three requested identifiers. The
+default and maximum decoded size is 20 MiB. It writes no attachment/cache file.
+Oversized or malformed responses fail rather than truncate. This is raw content,
+not an inspection result: keep it inside the caller's isolated processing boundary.
+These additive reads use bounded in-memory transport, no redirects or automatic
+retries, and cancellation before credential resolution; write behavior is unchanged.
+
+`messagePartBytes(accountId, messageId, partId, maxBytes)` reads an exact inline filename MIME part (including dotted or empty root part IDs), never an inferred attachment ID. It validates unique part identity and message ID, rejects remote-only/missing bytes, bounds the full-message response to 32 MiB and decoded bytes to 20 MiB, and returns `partId`, base64 bytes, byte count and SHA-256. Duplicate filenames remain distinct by part ID. Larger messages fail explicitly for caller reconciliation; no bytes are written to disk.

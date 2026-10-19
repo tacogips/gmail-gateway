@@ -18,7 +18,9 @@ extension GmailRequestProtocolTests {
                 .union(GmailGatewayAcceptedRuntimeContract.senderOperations)
                 .union(GmailGatewayAcceptedRuntimeContract.mailboxOperations)
                 .union(GmailGatewayAcceptedRuntimeContract.ingestOperations)
-            #expect(Set(RootInvocation.all.map(\.name)) == expected)
+            // Bounded archive reads use an explicit ephemeral-session fixture and
+            // their own SDK/CLI zero-dispatch capability matrix in ArchiveReadTests.
+            #expect(Set(RootInvocation.all.map(\.name)).union(["messageIds", "attachmentBytes", "messagePartBytes"]) == expected)
         }
 
         @Test func everyRootAndModeReportsTheExactCapabilityOutcomeForEveryCLIForm() throws {

@@ -186,7 +186,7 @@ private func filename(for kind: MessageMaterializedFileKind) -> String {
 
 private func parseGmailPayloadPart(_ payload: [String: Any], parsed: inout GmailParsedPayload) {
     let mimeType = nonBlank(payload["mimeType"] as? String)?.lowercased() ?? "application/octet-stream"
-    let partId = nonBlank(payload["partId"] as? String)
+    let partId = payload["partId"] as? String
     let filename = nonBlank(payload["filename"] as? String)
     let body = payload["body"] as? [String: Any] ?? [:]
     let attachmentId = nonBlank(body["attachmentId"] as? String)
@@ -194,7 +194,7 @@ private func parseGmailPayloadPart(_ payload: [String: Any], parsed: inout Gmail
     let hasAttachmentMetadata = attachmentId != nil || filename != nil
 
     if hasAttachmentMetadata {
-        let fallbackId = partId ?? filename ?? UUID().uuidString
+        let fallbackId = nonBlank(partId) ?? filename ?? UUID().uuidString
         parsed.attachments.append(GmailAttachmentPart(
             id: attachmentId ?? fallbackId,
             attachmentId: attachmentId,
@@ -212,7 +212,7 @@ private func parseGmailPayloadPart(_ payload: [String: Any], parsed: inout Gmail
 
 private func parseGmailPayloadPart(_ payload: GmailAPIPayload, parsed: inout GmailParsedPayload) {
     let mimeType = nonBlank(payload.mimeType)?.lowercased() ?? "application/octet-stream"
-    let partId = nonBlank(payload.partId)
+    let partId = payload.partId
     let filename = nonBlank(payload.filename)
     let body = payload.body
     let attachmentId = nonBlank(body?.attachmentId)
@@ -220,7 +220,7 @@ private func parseGmailPayloadPart(_ payload: GmailAPIPayload, parsed: inout Gma
     let hasAttachmentMetadata = attachmentId != nil || filename != nil
 
     if hasAttachmentMetadata {
-        let fallbackId = partId ?? filename ?? UUID().uuidString
+        let fallbackId = nonBlank(partId) ?? filename ?? UUID().uuidString
         parsed.attachments.append(GmailAttachmentPart(
             id: attachmentId ?? fallbackId,
             attachmentId: attachmentId,
