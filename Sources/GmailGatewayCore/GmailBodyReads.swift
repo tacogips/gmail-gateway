@@ -89,7 +89,13 @@ private func decodeBody(_ body: GmailBodyPartData, maximum: Int) throws -> Data 
     if body.size == 0 && body.data == nil { return Data() }
     guard let encoded = body.data else { throw bodyResponseError(.missingData) }
     guard encoded.utf8.count <= ((maximum + 2) / 3) * 4 else { throw bodyLimitError() }
-    guard let bytes = dataFromBase64URLString(encoded), bytes.count == body.size else { throw bodyResponseError(.decodedSize) }
+    guard let bytes = dataFromBase64URLString(encoded) else { throw bodyResponseError(.invalidBase64) }
+    guard bytes.count <= maximum else { throw bodyLimitError() }
+    guard bytes.count == body.size else {
+        throw GmailGatewayError(
+            "Invalid message body response [gmailBodyReason=decodedSize declaredByteCount=\(body.size) decodedByteCount=\(bytes.count)]",
+            code: .providerApiError, exitCode: .providerApiError)
+    }
     return bytes
 }
 
@@ -130,7 +136,7 @@ private func bodyLimitError() -> GmailGatewayError {
 // Closed codes only: never include message IDs, headers, body data or provider error text.
 private enum BodyReadReason: String {
     case messageEnvelope, bodyDescriptor, externalBodyDescriptor, externalBodyResponse
-    case treeLimit, filename, mimeType, partIdentity, children, missingData, decodedSize
+    case treeLimit, filename, mimeType, partIdentity, children, missingData, decodedSize, invalidBase64
     case headers, duplicateContentType, headerValue, mimeMismatch, duplicateCharset, charsetQuotes, charsetValue
 }
 

@@ -53,8 +53,12 @@ final class ArchiveReadTests: XCTestCase {
                 ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: payload)
                 XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m")) { error in
                     let error = error as? GmailGatewayError
-                    XCTAssertEqual(error?.message, "Invalid message body response [gmailBodyReason=\(reason)]")
-                    XCTAssertEqual(error?.details, ["bodyReadReason": reason])
+                    if reason == "decodedSize" {
+                        XCTAssertEqual(error?.message, "Invalid message body response [gmailBodyReason=decodedSize declaredByteCount=2 decodedByteCount=1]")
+                    } else {
+                        XCTAssertEqual(error?.message, "Invalid message body response [gmailBodyReason=\(reason)]")
+                        XCTAssertEqual(error?.details, ["bodyReadReason": reason])
+                    }
                 }
             }
             for header in ["text/plain;\n charset=UTF-8", "text/plain;\r charset=UTF-8", "text/plain;\r\nX-Private: secret", "text/plain; charset=\"broken"] {
@@ -66,6 +70,34 @@ final class ArchiveReadTests: XCTestCase {
                     XCTAssertTrue(message.hasPrefix("Invalid message body response [gmailBodyReason="))
                     XCTAssertFalse(message.contains("secret"))
                     XCTAssertFalse(message.contains("broken"))
+                }
+            }
+        }
+    }
+
+    func testProviderBodyAcceptsPaddedAndUnpaddedURLBase64WithExactSize() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            for encoded in ["-w", "-w==", "YWJj", "ZA", "ZA==", "YWI", "YWI="] {
+                let expected = try XCTUnwrap(dataFromBase64URLString(encoded))
+                ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": [
+                    "partId": "", "mimeType": "text/plain", "body": ["size": expected.count, "data": encoded]]])
+                let result = try service().messageBodyBytes(accountId: "personal", messageId: "m")
+                let parts = try XCTUnwrap(result["parts"] as? [[String: Any]])
+                XCTAssertEqual(parts.first?["byteCount"] as? Int, expected.count)
+                XCTAssertEqual(parts.first?["dataBase64"] as? String, expected.base64EncodedString())
+                XCTAssertEqual(parts.first?["sha256"] as? String, archiveSHA256(expected))
+            }
+        }
+    }
+
+    func testMalformedBase64IsDistinctFromDecodedSizeAndNeverReturnsBody() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            for data in ["private?", "+w==", "abc=d"] {
+                ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": [
+                    "partId": "", "mimeType": "text/plain", "body": ["size": 3, "data": data]]])
+                XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m")) { error in
+                    XCTAssertEqual((error as? GmailGatewayError)?.message,
+                        "Invalid message body response [gmailBodyReason=invalidBase64]")
                 }
             }
         }
