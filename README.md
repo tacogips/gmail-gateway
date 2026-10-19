@@ -544,3 +544,13 @@ Callers must decode the declared charset strictly inside their inspection bounda
 text exists or is safe. Empty parts require an explicit unavailable-body status.
 Missing, malformed, ambiguous or over-limit parts fail the whole operation rather
 than returning a truncated success. Ordinary attachment APIs are unchanged.
+
+### Bounded body read diagnostics
+
+`messageBodyBytes` accepts RFC 5322 folded Content-Type values (CRLF followed by
+space or tab); bare newlines and control characters remain invalid. Decoder
+failures include a closed `gmailBodyReason` token and bounded transport failures
+include a closed `gmailReadReason` token in the GraphQL error message. These
+contain no mail text, IDs, headers, URLs or localized provider errors. A reason
+identifies the failed validation boundary, not proof of the original incident's
+cause. No additional requests or automatic read/write retries are introduced.

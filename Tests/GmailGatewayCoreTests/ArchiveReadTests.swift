@@ -21,6 +21,69 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     // swiftlint:disable line_length
+    func testTransportReasonsAreClosedAndNeverCopyDescriptions() {
+        XCTAssertEqual(boundedReadFailureReason(NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)), .timeout)
+        XCTAssertEqual(boundedReadFailureReason(NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotFindHost)), .dns)
+        XCTAssertEqual(boundedReadFailureReason(NSError(domain: "private-provider", code: 42,
+            userInfo: [NSLocalizedDescriptionKey: "private message body"])), .transport)
+    }
+
+    func testFoldedContentTypePreservesBodyAndCharset() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            for header in ["text/plain;\r\n charset=ISO-2022-JP", "text/plain;\r\n\tcharset=\"UTF-8\""] {
+                ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": [
+                    "partId": "", "mimeType": "text/plain", "headers": [["name": "Content-Type", "value": header]],
+                    "body": ["size": 3, "data": "YWJj"]]])
+                let result = try service().messageBodyBytes(accountId: "personal", messageId: "m")
+                let parts = try XCTUnwrap(result["parts"] as? [[String: Any]])
+                XCTAssertEqual(parts.first?["dataBase64"] as? String, "YWJj")
+                XCTAssertEqual(parts.first?["charset"] as? String, header.contains("ISO") ? "ISO-2022-JP" : "UTF-8")
+            }
+        }
+    }
+
+    func testBodyFailuresHaveFiniteReasonsWithoutPrivateContent() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            let invalid: [(Any, String)] = [
+                (["id": "private-wrong-id", "payload": [:]], "messageEnvelope"),
+                (["id": "m", "payload": ["partId": "", "mimeType": "text/plain", "body": ["size": 1]]], "missingData"),
+                (["id": "m", "payload": ["partId": "", "mimeType": "text/plain", "body": ["size": 2, "data": "ZA"]]], "decodedSize")
+            ]
+            for (payload, reason) in invalid {
+                ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: payload)
+                XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m")) { error in
+                    let error = error as? GmailGatewayError
+                    XCTAssertEqual(error?.message, "Invalid message body response [gmailBodyReason=\(reason)]")
+                    XCTAssertEqual(error?.details, ["bodyReadReason": reason])
+                }
+            }
+            for header in ["text/plain;\n charset=UTF-8", "text/plain;\r charset=UTF-8", "text/plain;\r\nX-Private: secret", "text/plain; charset=\"broken"] {
+                ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": [
+                    "partId": "", "mimeType": "text/plain", "headers": [["name": "Content-Type", "value": header]],
+                    "body": ["size": 0]]])
+                XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m")) { error in
+                    let message = (error as? GmailGatewayError)?.message ?? ""
+                    XCTAssertTrue(message.hasPrefix("Invalid message body response [gmailBodyReason="))
+                    XCTAssertFalse(message.contains("secret"))
+                    XCTAssertFalse(message.contains("broken"))
+                }
+            }
+        }
+    }
+
+    func testBodyReasonSurvivesGraphQLBoundary() async throws {
+        let fixture = try GatewayRuntimeFixture()
+        defer { fixture.remove() }
+        ArchiveReadProtocol.payload = Data(#"{"id":"private-wrong-id","payload":{}}"#.utf8)
+        let result = await GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            await GmailGatewaySDK(mode: .reader).execute(
+                document: #"{ messageBodyBytes(accountId: "personal", messageId: "m") { byteCount } }"#,
+                variables: [:], environment: fixture.environment)
+        }
+        XCTAssertEqual(result.errors.first?.message, "Invalid message body response [gmailBodyReason=messageEnvelope]")
+        XCTAssertEqual(ArchiveReadProtocol.urls.count, 1)
+    }
+
     func testBodyBytesPreserveAlternativesCharsetAndExcludeAttachedText() throws {
         try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
             ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"multipart/mixed","parts":[{"partId":"0","mimeType":"multipart/alternative","parts":[{"partId":"0.0","mimeType":"text/plain","headers":[{"name":"Content-Type","value":"text/plain; charset=ISO-2022-JP"}],"body":{"size":3,"data":"YWJj"}},{"partId":"0.1","mimeType":"text/html","body":{"size":1,"data":"ZA"}}]},{"partId":"1","mimeType":"text/plain","filename":"original.txt","body":{"size":100000,"attachmentId":"not-fetched"}}]}}"#.utf8)

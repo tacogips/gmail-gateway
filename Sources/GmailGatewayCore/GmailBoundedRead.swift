@@ -41,7 +41,7 @@ final class GmailBoundedRead: NSObject, URLSessionDataDelegate, @unchecked Senda
         if identifier == nil { task.resume() }
         guard receiver.completed.wait(timeout: .now() + 30) == .success else {
             task.cancel()
-            throw GmailGatewayError("Bounded Gmail read timed out", code: .providerApiError, exitCode: .providerApiError)
+            throw boundedReadError(.timeout)
         }
         try GmailGatewayProviderCancellationContext.throwIfCancelled()
         return try receiver.result()
@@ -52,7 +52,7 @@ final class GmailBoundedRead: NSObject, URLSessionDataDelegate, @unchecked Senda
         defer { lock.unlock() }
         if let failure { throw failure }
         guard let response else {
-            throw GmailGatewayError("Empty bounded Gmail response", code: .providerApiError, exitCode: .providerApiError)
+            throw boundedReadError(.missingResponse)
         }
         guard (200..<300).contains(response.statusCode) else {
             throw GmailGatewayError("Gmail bounded read failed", code: .providerApiError, exitCode: .providerApiError,
@@ -86,8 +86,8 @@ final class GmailBoundedRead: NSObject, URLSessionDataDelegate, @unchecked Senda
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         lock.lock()
-        if failure == nil, error != nil {
-            failure = GmailGatewayError("Bounded Gmail read did not complete", code: .providerApiError, exitCode: .providerApiError)
+        if failure == nil, let error {
+            failure = boundedReadError(boundedReadFailureReason(error))
         }
         lock.unlock()
         completed.signal()
@@ -96,4 +96,32 @@ final class GmailBoundedRead: NSObject, URLSessionDataDelegate, @unchecked Senda
     private static func limitError() -> GmailGatewayError {
         GmailGatewayError("Gmail response exceeds byte limit", code: .resourceLimit, exitCode: .providerApiError)
     }
+}
+
+// Closed transport categories omit URLs, hostnames, localized descriptions and provider bodies.
+enum BoundedReadReason: String {
+    case timeout, missingResponse, cancelled, dns, connect, connectionLost, tls, offline, transport
+}
+
+func boundedReadFailureReason(_ error: Error) -> BoundedReadReason {
+    let error = error as NSError
+    guard error.domain == NSURLErrorDomain else { return .transport }
+    switch error.code {
+    case NSURLErrorTimedOut: return .timeout
+    case NSURLErrorCancelled: return .cancelled
+    case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed: return .dns
+    case NSURLErrorCannotConnectToHost: return .connect
+    case NSURLErrorNetworkConnectionLost: return .connectionLost
+    case NSURLErrorNotConnectedToInternet: return .offline
+    case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateHasBadDate,
+         NSURLErrorServerCertificateUntrusted, NSURLErrorServerCertificateHasUnknownRoot,
+         NSURLErrorServerCertificateNotYetValid, NSURLErrorClientCertificateRejected,
+         NSURLErrorClientCertificateRequired: return .tls
+    default: return .transport
+    }
+}
+
+private func boundedReadError(_ reason: BoundedReadReason) -> GmailGatewayError {
+    GmailGatewayError("Bounded Gmail read failed [gmailReadReason=\(reason.rawValue)]",
+                      code: .providerApiError, exitCode: .providerApiError)
 }
