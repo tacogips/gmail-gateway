@@ -75,6 +75,59 @@ final class ArchiveReadTests: XCTestCase {
         }
     }
 
+    func testExpandedProviderRepresentationPreservesActualBytesAndDeclaredMetadata() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            // Public synthetic fixture matches only the observed size pair, not private content.
+            let bytes = Data((String(repeating: "界", count: 391) + String(repeating: "a", count: 908)).utf8)
+            XCTAssertEqual(bytes.count, 2081)
+            ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": [
+                "partId": "", "mimeType": "text/plain", "headers": [["name": "Content-Type", "value": "text/plain; charset=UTF-8"]],
+                "body": ["size": 1690, "data": base64URLString(bytes)]]])
+            let result = try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 2081)
+            XCTAssertEqual(result["complete"] as? Bool, true)
+            XCTAssertEqual(result["representationScope"] as? String, "gmail-api-decoded-body")
+            XCTAssertEqual(result["byteCount"] as? Int, 2081)
+            let part = try XCTUnwrap((result["parts"] as? [[String: Any]])?.first)
+            XCTAssertEqual(part["providerDeclaredByteCount"] as? Int, 1690)
+            XCTAssertEqual(part["byteCount"] as? Int, 2081)
+            XCTAssertEqual(part["sizeStatus"] as? String, "expanded")
+            XCTAssertEqual(part["charset"] as? String, "UTF-8")
+            XCTAssertEqual(part["dataBase64"] as? String, bytes.base64EncodedString())
+            XCTAssertEqual(part["sha256"] as? String, archiveSHA256(bytes))
+            XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 2080))
+        }
+    }
+
+    func testExpandedPartsChargeActualTotalAndNeverTreatShrinkingAsComplete() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"mimeType":"multipart/alternative","parts":[{"partId":"0","mimeType":"text/plain","body":{"size":1,"data":"YWI"}},{"partId":"1","mimeType":"text/html","body":{"size":1,"data":"Y2Q"}}]}}"#.utf8)
+            XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 3))
+            let result = try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 4)
+            XCTAssertEqual(result["byteCount"] as? Int, 4)
+            ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"text/plain","body":{"size":3,"data":"YWI"}}}"#.utf8)
+            XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m")) { error in
+                XCTAssertEqual((error as? GmailGatewayError)?.message,
+                    "Invalid message body response [gmailBodyReason=decodedSize declaredByteCount=3 decodedByteCount=2]")
+            }
+        }
+    }
+
+    func testRepresentationMetadataIsSelectableThroughNativeGraphQL() async throws {
+        let fixture = try GatewayRuntimeFixture()
+        defer { fixture.remove() }
+        ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"text/plain","body":{"size":1,"data":"YWI"}}}"#.utf8)
+        let result = await GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            await GmailGatewaySDK(mode: .reader).execute(
+                document: #"{ messageBodyBytes(accountId: "personal", messageId: "m") { complete representationScope byteCount parts { providerDeclaredByteCount sizeStatus byteCount } } }"#,
+                variables: [:], environment: fixture.environment)
+        }
+        XCTAssertTrue(result.errors.isEmpty)
+        XCTAssertEqual(result.data, .object(["messageBodyBytes": .object([
+            "complete": .bool(true), "representationScope": .string("gmail-api-decoded-body"), "byteCount": .int(2),
+            "parts": .array([.object(["providerDeclaredByteCount": .int(1), "sizeStatus": .string("expanded"), "byteCount": .int(2)])])])]))
+        XCTAssertEqual(ArchiveReadProtocol.urls.count, 1)
+    }
+
     func testProviderBodyAcceptsPaddedAndUnpaddedURLBase64WithExactSize() throws {
         try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
             for encoded in ["-w", "-w==", "YWJj", "ZA", "ZA==", "YWI", "YWI="] {

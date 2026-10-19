@@ -554,3 +554,22 @@ include a closed `gmailReadReason` token in the GraphQL error message. These
 contain no mail text, IDs, headers, URLs or localized provider errors. A reason
 identifies the failed validation boundary, not proof of the original incident's
 cause. No additional requests or automatic read/write retries are introduced.
+
+### API body representation size
+
+`messageBodyBytes.complete` covers retrieval of all selected Gmail API body
+representations, not equivalence to the original RFC 822 message wire bytes.
+`representationScope` is `gmail-api-decoded-body`. Each part retains
+`providerDeclaredByteCount` separately from the actual `byteCount` and SHA-256.
+`sizeStatus` is `matched` or `expanded`: a valid complete base64url value may
+contain more bytes than Gmail's declared size. Such bytes are preserved exactly;
+no padding, truncation, charset guessing or transcoding is performed. A decoded
+value smaller than the declared size remains rejected as potentially truncated.
+The 2 MiB default / 8 MiB maximum and per-request transport limits apply to actual
+decoded bytes, independently of provider metadata. Invalid base64 still fails.
+The declared charset is unchanged and callers must validate its interpretation.
+
+Gmail's [MessagePartBody reference](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages.attachments)
+describes these fields; its [official Java model](https://github.com/googleapis/google-api-java-client-services/blob/main/clients/google-api-services-gmail/v1/2.0.0/com/google/api/services/gmail/model/MessagePartBody.java)
+decodes `data` independently of `size`. This gateway additionally retains
+conservative shrinking-representation rejection and hard actual-byte bounds.

@@ -7,7 +7,9 @@ private struct GmailBodyPartData: Decodable {
 }
 
 extension GmailGatewayService {
-    /// Explicit pipe-safe body access; message/thread retain their file-only contract.
+    /// Explicit pipe-safe API body representation; message/thread retain their file-only contract.
+    /// Provider declared sizes are retained separately; expanded API representations preserve actual bytes.
+    /// Shrinking representations remain rejected. This does not establish original RFC 822 wire equivalence.
     public func messageBodyBytes(accountId: String, messageId: String,
                                  maxBytes: Int = 2 * 1024 * 1024) throws -> [String: Any] {
         try GmailGatewayProviderCancellationContext.throwIfCancelled()
@@ -49,10 +51,12 @@ extension GmailGatewayService {
             total += data.count
             parts.append(["partId": part["partId"] ?? "", "mimeType": (part["mimeType"] as? String)?.lowercased() ?? "",
                 "charset": try bodyCharset(part) as Any? ?? NSNull(),
-                "dataBase64": data.base64EncodedString(), "byteCount": data.count, "sha256": archiveSHA256(data)])
+                "dataBase64": data.base64EncodedString(), "byteCount": data.count, "sha256": archiveSHA256(data),
+                "providerDeclaredByteCount": descriptor.size,
+                "sizeStatus": data.count == descriptor.size ? "matched" : "expanded"])
         }
         return ["accountId": account.id, "messageId": messageId, "complete": true,
-                "byteCount": total, "parts": parts]
+                "byteCount": total, "representationScope": "gmail-api-decoded-body", "parts": parts]
     }
 }
 
@@ -91,7 +95,7 @@ private func decodeBody(_ body: GmailBodyPartData, maximum: Int) throws -> Data 
     guard encoded.utf8.count <= ((maximum + 2) / 3) * 4 else { throw bodyLimitError() }
     guard let bytes = dataFromBase64URLString(encoded) else { throw bodyResponseError(.invalidBase64) }
     guard bytes.count <= maximum else { throw bodyLimitError() }
-    guard bytes.count == body.size else {
+    guard bytes.count >= body.size else {
         throw GmailGatewayError(
             "Invalid message body response [gmailBodyReason=decodedSize declaredByteCount=\(body.size) decodedByteCount=\(bytes.count)]",
             code: .providerApiError, exitCode: .providerApiError)
