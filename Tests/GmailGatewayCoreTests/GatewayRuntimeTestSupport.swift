@@ -245,7 +245,7 @@ extension GatewayRuntimeURLProtocol: @unchecked Sendable {}
 enum GmailGatewayAcceptedRuntimeContract {
     static let readOperations: Set<String> = [
         "accounts", "account", "threads", "thread", "message", "messageFileSet",
-        "attachment", "labels", "profile", "messageIds", "attachmentBytes", "messagePartBytes"
+        "attachment", "labels", "profile", "messageIds", "attachmentBytes", "messagePartBytes", "messageBodyBytes"
     ]
     static let draftOperations: Set<String> = [
         "drafts", "draft", "createDraft", "createReplyDraft", "createForwardDraft",

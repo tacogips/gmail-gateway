@@ -37,7 +37,7 @@ extension GatewaySchemaCatalog {
 private func authorizedOperationNames(for mode: GmailGatewayCLIMode) -> Set<String> {
     let reads: Set<String> = [
         "accounts", "account", "threads", "thread", "message", "messageFileSet",
-        "attachment", "labels", "profile", "messageIds", "attachmentBytes", "messagePartBytes"
+        "attachment", "labels", "profile", "messageBodyBytes", "messageIds", "attachmentBytes", "messagePartBytes"
     ]
     let drafts: Set<String> = [
         "drafts", "draft", "createDraft", "createReplyDraft", "createForwardDraft",
@@ -126,6 +126,7 @@ private let gmailOperations: [GatewayOperation] = [
     op("message", .query, "reader", accountMessageArgs, "MailMessage", "Fetch one mail message."),
     op("messageFileSet", .query, "reader", accountMessageArgs, "MailMessageFileSet!", "List materialized message files."),
     op("messageIds", .query, "reader", accountArgs + [arg("query", "String!", required: true), arg("first", "Int"), arg("after", "String"), arg("includeSpamTrash", "Boolean")], "GmailMessageIdPage!", "List message IDs without hydration; cursor is account/query bound."),
+    op("messageBodyBytes", .query, "reader", accountMessageArgs + [arg("maxBytes", "Int")], "GmailMessageBodyBytes!", "Read exact MIME body bytes in memory; default 2 MiB, maximum 8 MiB total. Existing message fields remain file-only."),
     op("messagePartBytes", .query, "reader", accountMessageArgs + [arg("partId", "String!", required: true), arg("maxBytes", "Int")], "GmailMessagePartBytes!", "Read exact inline filename part bytes with a maximum 20 MiB decoded bound."),
     op("attachmentBytes", .query, "reader", accountAttachmentArgs + [arg("maxBytes", "Int")], "GmailAttachmentBytes!", "Read attachment bytes in memory with a maximum 20 MiB decoded bound."),
     op("attachment", .query, "reader", accountAttachmentArgs, "MailAttachment", "Fetch attachment metadata."),
@@ -176,6 +177,8 @@ private let gmailTypes: [GatewayNamedType] = [
     GatewayNamedType(name: "DateTime", kind: .scalar),
     object("GmailMessageId", [field("id", "ID!"), field("threadId", "ID!")]),
     object("GmailMessageIdPage", [field("messages", "[GmailMessageId!]!"), field("pageInfo", "PageInfo!"), field("resultSizeEstimate", "Int")]),
+    object("GmailMessageBodyBytes", [field("accountId", "ID!"), field("messageId", "ID!"), field("complete", "Boolean!"), field("byteCount", "Int!"), field("parts", "[GmailMessageBodyPartBytes!]!")]),
+    object("GmailMessageBodyPartBytes", [field("partId", "String!"), field("mimeType", "String!"), field("charset", "String"), field("dataBase64", "String!"), field("byteCount", "Int!"), field("sha256", "String!")]),
     object("GmailMessagePartBytes", [field("accountId", "ID!"), field("messageId", "ID!"), field("partId", "String!"), field("dataBase64", "String!"), field("byteCount", "Int!"), field("sha256", "String!")]),
     object("GmailAttachmentBytes", [field("accountId", "ID!"), field("messageId", "ID!"), field("attachmentId", "ID!"), field("dataBase64", "String!"), field("byteCount", "Int!"), field("sha256", "String!")]),
     object("MailAddress", [field("address", "String!"), field("raw", "String!")]),

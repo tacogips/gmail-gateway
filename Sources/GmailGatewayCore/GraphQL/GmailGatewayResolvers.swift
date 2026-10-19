@@ -41,6 +41,11 @@ enum GmailGatewayResolvers {
                 first: optionalInt(args, "first") ?? 50, after: optionalString(args, "after"),
                 includeSpamTrash: bool(args, "includeSpamTrash")))
         },
+        "messageBodyBytes": { args, context in
+            try value(GmailGatewayService(config: try config(context)).messageBodyBytes(
+                accountId: string(args, "accountId"), messageId: string(args, "messageId"),
+                maxBytes: optionalInt(args, "maxBytes") ?? 2 * 1024 * 1024))
+        },
         "messagePartBytes": { args, context in
             try value(GmailGatewayService(config: try config(context)).messagePartBytes(
                 accountId: string(args, "accountId"), messageId: string(args, "messageId"),

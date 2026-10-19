@@ -134,11 +134,11 @@ extension GmailGatewayService {
     }
 }
 
-private func archiveSHA256(_ data: Data) -> String {
+func archiveSHA256(_ data: Data) -> String {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
-private func validArchiveID(_ value: String) -> Bool {
+func validArchiveID(_ value: String) -> Bool {
     !value.isEmpty && value.utf8.count <= 4096 && value.utf8.allSatisfy {
         (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
     }
@@ -148,10 +148,10 @@ private func validArchiveToken(_ value: String) -> Bool {
     !value.isEmpty && value.utf8.count <= 8192 && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
 }
 
-private func archiveArgumentError() -> GmailGatewayError {
+func archiveArgumentError() -> GmailGatewayError {
     GmailGatewayError("Invalid archive read arguments or cursor binding", code: .invalidArgument, exitCode: .graphqlExecutionError)
 }
 
-private func archiveResponseError() -> GmailGatewayError {
+func archiveResponseError() -> GmailGatewayError {
     GmailGatewayError("Invalid archive read response", code: .providerApiError, exitCode: .providerApiError)
 }

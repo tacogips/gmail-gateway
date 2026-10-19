@@ -515,3 +515,32 @@ These additive reads use bounded in-memory transport, no redirects or automatic
 retries, and cancellation before credential resolution; write behavior is unchanged.
 
 `messagePartBytes(accountId, messageId, partId, maxBytes)` reads an exact inline filename MIME part (including dotted or empty root part IDs), never an inferred attachment ID. It validates unique part identity and message ID, rejects remote-only/missing bytes, bounds the full-message response to 32 MiB and decoded bytes to 20 MiB, and returns `partId`, base64 bytes, byte count and SHA-256. Duplicate filenames remain distinct by part ID. Larger messages fail explicitly for caller reconciliation; no bytes are written to disk.
+
+### Explicit MIME body bytes for isolated inspection
+
+`message` and `thread` intentionally keep `textBody`/`htmlBody` null (the existing
+file-only read contract). To transfer original body bytes through an inspection
+pipe without materializing files, reader modes expose:
+
+```graphql
+query {
+  messageBodyBytes(accountId: "personal", messageId: "MESSAGE_ID", maxBytes: 2097152) {
+    accountId messageId complete byteCount
+    parts { partId mimeType charset dataBase64 byteCount sha256 }
+  }
+}
+```
+
+The cumulative decoded bound defaults to 2 MiB and may be set to 1–8 MiB. The
+full-message response is streamed with a 32 MiB wire cap; MIME traversal is bounded
+to depth64, 10,000 nodes and64 text/plain or text/html body parts. Filename-bearing
+attachments and nested attached messages remain separate originals. Inline and
+attachment-backed body parts use only fixed Gmail endpoints, with cancellation
+and provider-attempt budgets. No local body files or automatic retries are added.
+
+Parts retain provider order, original charset metadata and exact bytes/SHA256.
+Callers must decode the declared charset strictly inside their inspection boundary.
+`complete=true` means every qualifying part was returned; it does not assert that
+text exists or is safe. Empty parts require an explicit unavailable-body status.
+Missing, malformed, ambiguous or over-limit parts fail the whole operation rather
+than returning a truncated success. Ordinary attachment APIs are unchanged.

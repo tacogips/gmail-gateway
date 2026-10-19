@@ -20,6 +20,87 @@ final class ArchiveReadTests: XCTestCase {
             credentials: [credential], accounts: [account]))
     }
 
+    // swiftlint:disable line_length
+    func testBodyBytesPreserveAlternativesCharsetAndExcludeAttachedText() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"multipart/mixed","parts":[{"partId":"0","mimeType":"multipart/alternative","parts":[{"partId":"0.0","mimeType":"text/plain","headers":[{"name":"Content-Type","value":"text/plain; charset=ISO-2022-JP"}],"body":{"size":3,"data":"YWJj"}},{"partId":"0.1","mimeType":"text/html","body":{"size":1,"data":"ZA"}}]},{"partId":"1","mimeType":"text/plain","filename":"original.txt","body":{"size":100000,"attachmentId":"not-fetched"}}]}}"#.utf8)
+            let result = try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 4)
+            let parts = try XCTUnwrap(result["parts"] as? [[String: Any]])
+            XCTAssertEqual(parts.count, 2)
+            XCTAssertEqual(parts[0]["partId"] as? String, "0.0")
+            XCTAssertEqual(parts[0]["charset"] as? String, "ISO-2022-JP")
+            XCTAssertEqual(parts[0]["dataBase64"] as? String, "YWJj")
+            XCTAssertEqual(parts[0]["sha256"] as? String, archiveSHA256(Data("abc".utf8)))
+            XCTAssertEqual(result["byteCount"] as? Int, 4)
+            XCTAssertEqual(result["complete"] as? Bool, true)
+            XCTAssertEqual(ArchiveReadProtocol.urls.count, 1)
+            XCTAssertEqual(ArchiveReadProtocol.urls[0].query, "format=full")
+            XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 3))
+        }
+    }
+
+    func testBodyBytesExternalPartUsesExactFixedEndpointAndBound() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            ArchiveReadProtocol.responses = [
+                Data(#"{"id":"m","payload":{"partId":"","mimeType":"text/plain","body":{"size":3,"attachmentId":"body-a"}}}"#.utf8),
+                Data(#"{"size":3,"data":"YWJj"}"#.utf8)]
+            let result = try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 3)
+            XCTAssertEqual(result["byteCount"] as? Int, 3)
+            XCTAssertEqual(ArchiveReadProtocol.urls.map(\.path), ["/gmail/v1/users/me/messages/m", "/gmail/v1/users/me/messages/m/attachments/body-a"])
+        }
+    }
+
+    func testBodyBytesMissingAmbiguousMalformedAndDuplicatePartsFailWithoutPartialSuccess() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            for value in [
+                #"{"id":"wrong","payload":{"mimeType":"text/plain"}}"#,
+                #"{"id":"m","payload":{"partId":"","mimeType":"text/plain","body":{"size":1}}}"#,
+                #"{"id":"m","payload":{"partId":"","mimeType":"text/plain","body":{"size":1,"data":"ZA","attachmentId":"a"}}}"#,
+                #"{"id":"m","payload":{"partId":"","mimeType":"text/plain","body":{"size":2,"data":"ZA"}}}"#,
+                #"{"id":"m","payload":{"mimeType":"multipart/alternative","parts":[{"partId":"0","mimeType":"text/plain","body":{"size":0,"data":""}},{"partId":"0","mimeType":"text/html","body":{"size":0,"data":""}}]}}"#
+            ] {
+                ArchiveReadProtocol.payload = Data(value.utf8)
+                XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m"))
+            }
+        }
+    }
+
+    func testBodyBoundsRejectBeforeCredentialsAndEmptyIsNotInventedText() throws {
+        XCTAssertThrowsError(try service(token: nil).messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 0))
+        XCTAssertThrowsError(try service(token: nil).messageBodyBytes(accountId: "personal", messageId: "../bad"))
+        XCTAssertTrue(ArchiveReadProtocol.urls.isEmpty)
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"multipart/mixed","parts":[]}}"#.utf8)
+            let result = try service().messageBodyBytes(accountId: "personal", messageId: "m")
+            XCTAssertEqual((result["parts"] as? [[String: Any]])?.count, 0)
+            XCTAssertEqual(result["byteCount"] as? Int, 0)
+        }
+    }
+
+    func testExplicitZeroByteBodyMayOmitDataAndMimeIsCanonical() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"TEXT/PLAIN","body":{"size":0}}}"#.utf8)
+            let result = try service().messageBodyBytes(accountId: "personal", messageId: "m")
+            let parts = try XCTUnwrap(result["parts"] as? [[String: Any]])
+            XCTAssertEqual(parts.first?["mimeType"] as? String, "text/plain")
+            XCTAssertEqual(parts.first?["dataBase64"] as? String, "")
+            XCTAssertEqual(result["byteCount"] as? Int, 0)
+        }
+    }
+
+    func testBodyTraversalAndPartCountAreBounded() throws {
+        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+            var nested: [String: Any] = ["partId": "0", "mimeType": "text/plain", "body": ["size": 0, "data": ""]]
+            for _ in 0..<65 { nested = ["mimeType": "multipart/mixed", "parts": [nested]] }
+            ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": nested])
+            XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m"))
+            let many = (0..<65).map { ["partId": String($0), "mimeType": "text/plain", "body": ["size": 0, "data": ""]] as [String: Any] }
+            ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": ["mimeType": "multipart/mixed", "parts": many]])
+            XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m"))
+        }
+    }
+
+    // swiftlint:enable line_length
     func testReaderSDKExposesBothOperationsAndRejectsInvalidBoundsBeforeTransport() async throws {
         let fixture = try GatewayRuntimeFixture()
         defer { fixture.remove() }
@@ -53,6 +134,7 @@ final class ArchiveReadTests: XCTestCase {
         defer { fixture.remove() }
         for mode: GmailGatewayCLIMode in [.reader, .draftGateway, .directSender, .mailboxThreads, .messageBox] {
             for (operation, arguments) in [
+                ("messageBodyBytes", #"{"accountId":"personal","messageId":"m","maxBytes":0}"#),
                 ("messageIds", #"{"accountId":"personal","query":"","first":101}"#),
                 ("attachmentBytes", #"{"accountId":"personal","messageId":"m","attachmentId":"a","maxBytes":0}"#),
                 ("messagePartBytes", #"{"accountId":"personal","messageId":"m","partId":"0","maxBytes":0}"#)
@@ -177,6 +259,9 @@ final class ArchiveReadTests: XCTestCase {
             let cancellation = GmailGatewayProviderCancellation()
             cancellation.cancel()
             try GmailGatewayProviderCancellationContext.$current.withValue(cancellation) {
+                XCTAssertThrowsError(try service(token: nil).messageBodyBytes(accountId: "personal", messageId: "m")) { error in
+                    XCTAssertEqual((error as? GmailGatewayError)?.code, .cancelled)
+                }
                 XCTAssertThrowsError(try service(token: nil).messageIds(accountId: "personal", query: "")) { error in
                     XCTAssertEqual((error as? GmailGatewayError)?.code, .cancelled)
                 }
@@ -239,11 +324,12 @@ final class ArchiveReadTests: XCTestCase {
 private class ArchiveReadProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) static var payload = Data()
+    nonisolated(unsafe) static var responses: [Data] = []
     nonisolated(unsafe) static var contentLength: String?
     nonisolated(unsafe) static var onStart: (@Sendable () -> Void)?
     nonisolated(unsafe) private static var requests: [URL] = []
     static var urls: [URL] { lock.lock(); defer { lock.unlock() }; return requests }
-    static func reset() { lock.lock(); defer { lock.unlock() }; requests = []; payload = Data(); contentLength = nil; onStart = nil }
+    static func reset() { lock.lock(); defer { lock.unlock() }; requests = []; responses = []; payload = Data(); contentLength = nil; onStart = nil }
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "gmail.googleapis.com" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -253,7 +339,8 @@ private class ArchiveReadProtocol: URLProtocol, @unchecked Sendable {
         let headers = Self.contentLength.map { ["Content-Length": $0] } ?? [:]
         guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers) else { return }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Self.payload)
+        Self.lock.lock(); let bytes = Self.responses.isEmpty ? Self.payload : Self.responses.removeFirst(); Self.lock.unlock()
+        client?.urlProtocol(self, didLoad: bytes)
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
