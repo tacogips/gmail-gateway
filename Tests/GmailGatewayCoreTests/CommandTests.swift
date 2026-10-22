@@ -1,5 +1,9 @@
 import Foundation
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Testing
 @testable import GmailGatewayCore
 
@@ -799,7 +803,7 @@ private func sendRawHTTPRequest(to urlString: String) throws -> String {
         throw ExpectedGmailGatewayError(description: "Invalid callback URL: \(urlString)")
     }
     let isIPv6 = host == "[::1]" || host == "::1"
-    let socketFD = socket(isIPv6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0)
+    let socketFD = socket(isIPv6 ? AF_INET6 : AF_INET, callbackStreamSocketType, 0)
     guard socketFD >= 0 else {
         throw ExpectedGmailGatewayError(description: "Failed to create callback test socket")
     }
@@ -810,7 +814,9 @@ private func sendRawHTTPRequest(to urlString: String) throws -> String {
     let connectResult: Int32
     if isIPv6 {
         var address = sockaddr_in6()
+        #if canImport(Darwin)
         address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        #endif
         address.sin6_family = sa_family_t(AF_INET6)
         address.sin6_port = in_port_t(port).bigEndian
         guard inet_pton(AF_INET6, "::1", &address.sin6_addr) == 1 else {
@@ -818,18 +824,20 @@ private func sendRawHTTPRequest(to urlString: String) throws -> String {
         }
         connectResult = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                Darwin.connect(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in6>.size))
+                connect(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in6>.size))
             }
         }
     } else {
         var address = sockaddr_in()
+        #if canImport(Darwin)
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        #endif
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(port).bigEndian
         address.sin_addr = in_addr(s_addr: inet_addr(host))
         connectResult = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                Darwin.connect(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
+                connect(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
     }
@@ -849,13 +857,13 @@ private func sendRawHTTPRequest(to urlString: String) throws -> String {
 
     """
     _ = request.withCString { pointer in
-        Darwin.write(socketFD, pointer, strlen(pointer))
+        write(socketFD, pointer, strlen(pointer))
     }
 
     var response = Data()
     var buffer = [UInt8](repeating: 0, count: 1_024)
     while true {
-        let count = Darwin.read(socketFD, &buffer, buffer.count)
+        let count = read(socketFD, &buffer, buffer.count)
         if count <= 0 {
             break
         }
@@ -865,7 +873,7 @@ private func sendRawHTTPRequest(to urlString: String) throws -> String {
 }
 
 private func reserveFreeLoopbackPort() throws -> UInt16 {
-    let socketFD = socket(AF_INET, SOCK_STREAM, 0)
+    let socketFD = socket(AF_INET, callbackStreamSocketType, 0)
     guard socketFD >= 0 else {
         throw ExpectedGmailGatewayError(description: "Failed to create port reservation socket")
     }
@@ -874,13 +882,15 @@ private func reserveFreeLoopbackPort() throws -> UInt16 {
     }
 
     var address = sockaddr_in()
+    #if canImport(Darwin)
     address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    #endif
     address.sin_family = sa_family_t(AF_INET)
     address.sin_port = in_port_t(0).bigEndian
     address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
     let bindResult = withUnsafePointer(to: &address) { pointer in
         pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-            Darwin.bind(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
+            bind(socketFD, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
         }
     }
     guard bindResult == 0 else {
@@ -955,4 +965,12 @@ func requireGmailGatewayError(_ operation: () throws -> Void) throws -> GmailGat
     } catch {
         throw ExpectedGmailGatewayError(description: "Expected GmailGatewayError, got \(error)")
     }
+}
+
+private var callbackStreamSocketType: Int32 {
+    #if os(Linux)
+    Int32(SOCK_STREAM.rawValue)
+    #else
+    SOCK_STREAM
+    #endif
 }

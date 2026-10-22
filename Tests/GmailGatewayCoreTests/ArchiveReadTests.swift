@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import XCTest
 import GatewaySDKKit
 @testable import GmailGatewayCore
@@ -361,7 +364,10 @@ final class ArchiveReadTests: XCTestCase {
     func testCancellationStopsOwnedReadInFlight() throws {
         try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
             let cancellation = GmailGatewayProviderCancellation()
-            ArchiveReadProtocol.onStart = { cancellation.cancel() }
+            ArchiveReadProtocol.onStart = {
+                // FoundationNetworking must cancel from outside its protocol queue.
+                DispatchQueue.global().async { cancellation.cancel() }
+            }
             let started = Date()
             try GmailGatewayProviderCancellationContext.$current.withValue(cancellation) {
                 XCTAssertThrowsError(try service().messageIds(accountId: "personal", query: "")) { error in

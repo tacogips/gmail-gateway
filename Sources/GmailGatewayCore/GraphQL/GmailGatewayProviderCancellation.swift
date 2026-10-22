@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Owns cancellation for all provider work started by one GraphQL execution.
 /// Provider services are synchronous, so the executor installs this context at

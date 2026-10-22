@@ -160,7 +160,12 @@ final class PersistentAuthRedirectSemanticsTests: XCTestCase {
 }
 
 private func reserveIPv6LoopbackListener() throws -> (descriptor: Int32, port: UInt16) {
-    let descriptor = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP)
+    #if os(Linux)
+    let streamSocketType = Int32(SOCK_STREAM.rawValue)
+    #else
+    let streamSocketType = SOCK_STREAM
+    #endif
+    let descriptor = socket(AF_INET6, streamSocketType, Int32(IPPROTO_TCP))
     guard descriptor >= 0 else {
         throw PersistentAuthRedirectTestError(description: "Failed to create IPv6 port reservation socket")
     }
@@ -168,7 +173,7 @@ private func reserveIPv6LoopbackListener() throws -> (descriptor: Int32, port: U
         var ipv6Only: Int32 = 1
         guard setsockopt(
             descriptor,
-            IPPROTO_IPV6,
+            Int32(IPPROTO_IPV6),
             IPV6_V6ONLY,
             &ipv6Only,
             socklen_t(MemoryLayout<Int32>.size)

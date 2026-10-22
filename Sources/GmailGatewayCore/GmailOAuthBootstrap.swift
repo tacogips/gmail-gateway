@@ -1,8 +1,21 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import GoogleGatewayAuth
+#if canImport(Security)
 import Security
+#endif
 
 struct GmailOAuthLoginOptions: Sendable {
     static let defaultTimeoutSeconds: Int32 = 300
@@ -303,7 +316,7 @@ final class LoopbackOAuthReceiver: @unchecked Sendable {
         while Date() < deadline {
             let remainingMilliseconds = max(1, Int32(deadline.timeIntervalSinceNow * 1_000))
             var pollSet = listeners.map { pollfd(fd: $0.descriptor, events: Int16(POLLIN), revents: 0) }
-            let pollResult = Darwin.poll(&pollSet, nfds_t(pollSet.count), remainingMilliseconds)
+            let pollResult = poll(&pollSet, nfds_t(pollSet.count), remainingMilliseconds)
             guard pollResult > 0 else {
                 break
             }
@@ -366,8 +379,8 @@ private func resolvedLocalhostLoopbackAddresses() throws -> [String] {
     // Resolving before binding also makes the set of listeners test-injectable.
     var hints = addrinfo()
     hints.ai_family = AF_UNSPEC
-    hints.ai_socktype = SOCK_STREAM
-    hints.ai_protocol = IPPROTO_TCP
+    hints.ai_socktype = oauthStreamSocketType
+    hints.ai_protocol = Int32(IPPROTO_TCP)
     var result: UnsafeMutablePointer<addrinfo>?
     guard getaddrinfo("localhost", nil, &hints, &result) == 0, let result else {
         throw authError("Failed to resolve OAuth callback host")
@@ -403,7 +416,7 @@ private func loopbackAddressString(_ bytes: [CChar]) -> String {
 
 private func openLoopbackOAuthListener(host: String, port: UInt16) throws -> LoopbackOAuthListener {
     let addressFamily: Int32 = host == "::1" ? AF_INET6 : AF_INET
-    let descriptor = socket(addressFamily, SOCK_STREAM, 0)
+    let descriptor = socket(addressFamily, oauthStreamSocketType, 0)
     guard descriptor >= 0 else { throw authError("Failed to create OAuth callback socket") }
     do {
         var reuse: Int32 = 1
@@ -425,7 +438,9 @@ private func bindLoopbackSocket(_ fd: Int32, host: String, port: UInt16) throws 
     switch host == "::1" ? AF_INET6 : AF_INET {
     case AF_INET:
         var address = sockaddr_in()
+        #if canImport(Darwin)
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        #endif
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(port).bigEndian
         guard inet_pton(AF_INET, host, &address.sin_addr) == 1 else {
@@ -433,12 +448,14 @@ private func bindLoopbackSocket(_ fd: Int32, host: String, port: UInt16) throws 
         }
         return withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                Darwin.bind(fd, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
+                bind(fd, socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
     case AF_INET6:
         var address = sockaddr_in6()
+        #if canImport(Darwin)
         address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        #endif
         address.sin6_family = sa_family_t(AF_INET6)
         address.sin6_port = in_port_t(port).bigEndian
         guard inet_pton(AF_INET6, host, &address.sin6_addr) == 1 else {
@@ -446,7 +463,7 @@ private func bindLoopbackSocket(_ fd: Int32, host: String, port: UInt16) throws 
         }
         return withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                Darwin.bind(fd, socketAddress, socklen_t(MemoryLayout<sockaddr_in6>.size))
+                bind(fd, socketAddress, socklen_t(MemoryLayout<sockaddr_in6>.size))
             }
         }
     default:
@@ -490,11 +507,11 @@ private func readHTTPRequest(connection: Int32) throws -> String? {
     var buffer = [UInt8](repeating: 0, count: 2_048)
     while data.count < 16_384 {
         var pollSet = [pollfd(fd: connection, events: Int16(POLLIN), revents: 0)]
-        let pollResult = Darwin.poll(&pollSet, 1, 1_000)
+        let pollResult = poll(&pollSet, 1, 1_000)
         guard pollResult > 0 else {
             break
         }
-        let count = Darwin.read(connection, &buffer, buffer.count)
+        let count = read(connection, &buffer, buffer.count)
         guard count > 0 else {
             break
         }
@@ -553,7 +570,11 @@ func buildAuthorizationURL(
 
 private func openBrowser(_ url: URL) throws {
     let process = Process()
+    #if os(Linux)
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xdg-open")
+    #else
     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    #endif
     process.arguments = [url.absoluteString]
     do {
         try process.run()
@@ -733,10 +754,17 @@ func gmailScopes(accessMode: AccessMode) -> [String] {
 
 private func randomURLSafeString(byteCount: Int) throws -> String {
     var bytes = [UInt8](repeating: 0, count: byteCount)
+    #if canImport(Security)
     let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
     guard status == errSecSuccess else {
         throw authError("Failed to generate secure OAuth random value")
     }
+    #else
+    var generator = SystemRandomNumberGenerator()
+    for index in bytes.indices {
+        bytes[index] = UInt8.random(in: .min ... .max, using: &generator)
+    }
+    #endif
     return base64URLString(Data(bytes))
 }
 
@@ -754,7 +782,7 @@ private func writeHTTPResponse(_ connection: Int32, status: String, body: String
     \(body)
     """
     _ = response.withCString { pointer in
-        Darwin.write(connection, pointer, strlen(pointer))
+        write(connection, pointer, strlen(pointer))
     }
 }
 
@@ -764,4 +792,12 @@ private func authError(_ message: String) -> GmailGatewayError {
         code: .authRequired,
         exitCode: .authenticationBootstrapError
     )
+}
+
+private var oauthStreamSocketType: Int32 {
+    #if os(Linux)
+    Int32(SOCK_STREAM.rawValue)
+    #else
+    SOCK_STREAM
+    #endif
 }

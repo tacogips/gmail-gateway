@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import GmailGatewayCore
 
 func testMessageFileDownload(cleanup: inout [String]) throws {

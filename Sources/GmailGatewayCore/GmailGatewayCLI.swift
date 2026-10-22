@@ -469,16 +469,21 @@ public struct GmailGatewayCLI {
         let semaphore = DispatchSemaphore(value: 0)
         let result = LockedEnvelope()
         let selectedMode = mode
-        Self.executorBridgeQueue.async {
-            Task.detached {
-                result.value = await GmailGatewayGraphQLExecutor(configuration: configuration).run(
-                    query: query,
-                    variables: variables,
-                    mode: selectedMode,
-                    environment: environment,
-                    configurationPolicy: .cliDefaults
-                )
-                semaphore.signal()
+        let operation: @Sendable () async -> Void = {
+            result.value = await GmailGatewayGraphQLExecutor(configuration: configuration).run(
+                query: query,
+                variables: variables,
+                mode: selectedMode,
+                environment: environment,
+                configurationPolicy: .cliDefaults
+            )
+            semaphore.signal()
+        }
+        if #available(macOS 15.0, *) {
+            Task.detached(executorPreference: GmailCLIExecutor.shared, operation: operation)
+        } else {
+            Self.executorBridgeQueue.async {
+                Task.detached(operation: operation)
             }
         }
         semaphore.wait()

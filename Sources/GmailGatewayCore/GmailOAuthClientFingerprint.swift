@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 func gmailOAuthClientFingerprint(_ client: GmailOAuthClientRecord) throws -> String {

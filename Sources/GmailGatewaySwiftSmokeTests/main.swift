@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @_spi(Testing) import GmailGatewayCore
 
 func runSmokeTests() throws {

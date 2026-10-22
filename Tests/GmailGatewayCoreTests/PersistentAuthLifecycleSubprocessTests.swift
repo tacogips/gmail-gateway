@@ -77,10 +77,16 @@ final class PersistentAuthLifecycleSubprocessTests: XCTestCase {
         let contentionPath = root.appendingPathComponent("contended").path
         let process = Process()
         let input = Pipe()
+        #if os(Linux)
+        process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+            .deletingLastPathComponent()
+            .appendingPathComponent("gmail-gateway-swift-smoke-tests")
+        #else
         process.executableURL = Bundle(for: PersistentAuthLifecycleSubprocessTests.self)
             .bundleURL
             .deletingLastPathComponent()
             .appendingPathComponent("gmail-gateway-swift-smoke-tests")
+        #endif
         var environment = ProcessInfo.processInfo.environment
         environment["GMAIL_GATEWAY_LOCK_FIXTURE_CREDENTIAL"] = credentialID
         environment["GMAIL_GATEWAY_LOCK_FIXTURE_MODE"] = mode
@@ -120,11 +126,19 @@ private final class FixtureFileSignal: @unchecked Sendable {
     private let lock = NSLock()
     private let path: String
     private var didSignal = false
+    #if os(Linux)
+    private let source: DispatchSourceTimer
+    #else
     private let descriptor: Int32
     private let source: DispatchSourceFileSystemObject
+    #endif
 
     init(path: String) throws {
         self.path = path
+        #if os(Linux)
+        source = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+        source.schedule(deadline: .now(), repeating: .milliseconds(10))
+        #else
         let directory = URL(fileURLWithPath: path).deletingLastPathComponent().path
         descriptor = open(directory, O_EVTONLY)
         guard descriptor >= 0 else { throw POSIXError(.EIO) }
@@ -133,6 +147,7 @@ private final class FixtureFileSignal: @unchecked Sendable {
             eventMask: .write,
             queue: .global(qos: .userInitiated)
         )
+        #endif
         source.setEventHandler { [weak self] in
             guard FileManager.default.fileExists(atPath: path) else { return }
             self?.signal()
@@ -145,7 +160,9 @@ private final class FixtureFileSignal: @unchecked Sendable {
 
     deinit {
         source.cancel()
+        #if !os(Linux)
         close(descriptor)
+        #endif
     }
 
     private func signal() {

@@ -42,6 +42,21 @@ The package uses Swift Package Manager with:
 - Installed executables: `gmail-gateway-reader`, `gmail-gateway-draft`, `gmail-gateway-sender`,
   `gmail-gateway-threads`, `gmail-gateway-message-box`
 
+## Linux embedding
+
+`GmailGatewayCore` and the CLI targets support Linux as well as macOS. Linux
+uses Swift Crypto for SHA-256, the system random generator for OAuth state and
+PKCE, and `renameat2(RENAME_NOREPLACE)` for exclusive token-transaction moves.
+Unsupported exclusive renames fail without falling back to a non-atomic move.
+Credential precedence, token-file protections, and per-binary capabilities apply
+on both platforms. If Linux FoundationNetworking loses an HTTP response together
+with a transport error, a mutation reports an unknown outcome and is never
+automatically replayed.
+
+Headless readers use configured credentials without opening a browser. Explicit
+interactive OAuth login on Linux uses `/usr/bin/xdg-open` when browser opening
+is enabled; use `--open-browser false` on headless systems.
+
 ## Binary Capabilities
 
 Each binary exposes a strictly separate slice of the GraphQL surface:

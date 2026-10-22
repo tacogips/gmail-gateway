@@ -17,14 +17,18 @@ let package = Package(
     .executable(name: "gmail-gateway-swift-smoke-tests", targets: ["GmailGatewaySwiftSmokeTests"])
   ],
   dependencies: [
+    .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.2"),
     .package(url: "https://github.com/tacogips/google-gateway-auth.git", revision: "48e0112fb5eb057cf012194cfffaa2581ba29d76"),
     .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.1"),
     .package(url: "https://github.com/tacogips/google-service-gateway.git", revision: "4cfef44b245893e6de4f30780c70fb0314da70eb")
   ],
   targets: [
+    .target(name: "GmailGatewayPlatform"),
     .target(
       name: "GmailGatewayCore",
       dependencies: [
+        "GmailGatewayPlatform",
+        .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux])),
         .product(name: "GoogleGatewayAuth", package: "google-gateway-auth"),
         .product(name: "GatewaySDKKit", package: "gateway-sdk-kit"),
         .product(name: "GoogleServiceGatewayCore", package: "google-service-gateway")
@@ -58,6 +62,7 @@ let package = Package(
       name: "GmailGatewayCoreTests",
       dependencies: [
         "GmailGatewayCore",
+        "GmailGatewayPlatform",
         .product(name: "GatewaySDKKit", package: "gateway-sdk-kit"),
         .product(name: "GoogleServiceGatewayCore", package: "google-service-gateway")
       ]

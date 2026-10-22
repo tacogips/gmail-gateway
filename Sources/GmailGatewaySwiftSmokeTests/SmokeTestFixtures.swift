@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import GmailGatewayCore
 
 enum SmokeTestFailure: Error, CustomStringConvertible {

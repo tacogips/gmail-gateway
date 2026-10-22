@@ -1,4 +1,5 @@
 import Foundation
+import GmailGatewayPlatform
 
 #if os(Linux)
 import Glibc
@@ -307,7 +308,6 @@ func writeSecureGmailOAuthTokenData(
                 parent,
                 from: temporaryLeaf,
                 to: parent.leaf,
-                flags: RENAME_EXCL,
                 path: path,
                 credential: credential,
                 exitCode: exitCode
@@ -343,7 +343,6 @@ func writeSecureGmailOAuthTokenData(
                 parent,
                 from: parent.leaf,
                 to: quarantineLeaf,
-                flags: RENAME_EXCL,
                 path: path,
                 credential: credential,
                 exitCode: exitCode
@@ -372,7 +371,6 @@ func writeSecureGmailOAuthTokenData(
                 parent,
                 from: temporaryLeaf,
                 to: parent.leaf,
-                flags: RENAME_EXCL,
                 path: path,
                 credential: credential,
                 exitCode: exitCode
@@ -467,7 +465,7 @@ func removePersistentTokenFile(
             transactionStarted = false
             throw persistentTokenPathError("selected token source changed during lifecycle operation", path: path, credential: credential, exitCode: exitCode)
         }
-        try renamePersistentTokenFile(parent, from: parent.leaf, to: quarantineLeaf, flags: RENAME_EXCL, path: path, credential: credential, exitCode: exitCode)
+        try renamePersistentTokenFile(parent, from: parent.leaf, to: quarantineLeaf, path: path, credential: credential, exitCode: exitCode)
         try mutationHook?(.afterQuarantine)
         guard try persistentTokenFileCurrentState(parent, leaf: quarantineLeaf) == expectedState.currentState else {
             try mutationHook?(.beforeRestore)
@@ -603,12 +601,11 @@ private func renamePersistentTokenFile(
     _ parent: PersistentTokenParentDirectory,
     from source: String,
     to destination: String,
-    flags: Int32,
     path: String,
     credential: CredentialConfig,
     exitCode: GmailGatewayExitCode
 ) throws {
-    guard renameatx_np(parent.descriptor, source, parent.descriptor, destination, UInt32(flags)) == 0 else {
+    guard gmail_gateway_rename_exclusive(parent.descriptor, source, parent.descriptor, destination) == 0 else {
         throw persistentTokenPathError("selected token source changed during lifecycle operation", path: path, credential: credential, exitCode: exitCode)
     }
     guard fsync(parent.descriptor) == 0 else {
@@ -670,7 +667,7 @@ private func recoverPersistentTokenFileTransaction(
             try removePersistentTokenLeaf(parent, leaf: temporaryLeaf, path: path, credential: credential, exitCode: exitCode)
         case (.absent, let .identity(quarantineIdentity), let .identity(temporaryIdentity))
             where quarantineIdentity == journal.expectedIdentity && temporaryIdentity == candidateIdentity && journal.phase != .published:
-            try renamePersistentTokenFile(parent, from: journal.quarantineLeaf, to: parent.leaf, flags: RENAME_EXCL, path: path, credential: credential, exitCode: exitCode)
+            try renamePersistentTokenFile(parent, from: journal.quarantineLeaf, to: parent.leaf, path: path, credential: credential, exitCode: exitCode)
             try removePersistentTokenLeaf(parent, leaf: temporaryLeaf, path: path, credential: credential, exitCode: exitCode)
         case (let .identity(canonicalIdentity), let .identity(quarantineIdentity), let .identity(temporaryIdentity))
             where canonicalIdentity != candidateIdentity && quarantineIdentity == journal.expectedIdentity && temporaryIdentity == candidateIdentity && journal.phase != .published:
@@ -698,7 +695,7 @@ private func recoverPersistentTokenFileTransaction(
             break
         case (.absent, let .identity(quarantineIdentity), .absent)
             where quarantineIdentity == journal.expectedIdentity && journal.phase == .quarantined:
-            try renamePersistentTokenFile(parent, from: journal.quarantineLeaf, to: parent.leaf, flags: RENAME_EXCL, path: path, credential: credential, exitCode: exitCode)
+            try renamePersistentTokenFile(parent, from: journal.quarantineLeaf, to: parent.leaf, path: path, credential: credential, exitCode: exitCode)
         case (.absent, .absent, .absent):
             // Only a journal explicitly recording revocation may represent a
             // completed delete or an irrevocably lost quarantine entry. A
@@ -791,7 +788,7 @@ private func installPersistentTokenTransactionJournal(
         if replacingExisting {
             guard renameat(parent.descriptor, temporaryLeaf, parent.descriptor, journalLeaf) == 0 else { throw POSIXError(.EIO) }
         } else {
-            guard renameatx_np(parent.descriptor, temporaryLeaf, parent.descriptor, journalLeaf, UInt32(RENAME_EXCL)) == 0 else {
+            guard gmail_gateway_rename_exclusive(parent.descriptor, temporaryLeaf, parent.descriptor, journalLeaf) == 0 else {
                 throw POSIXError(.EIO)
             }
         }

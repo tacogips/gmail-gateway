@@ -109,9 +109,10 @@ final class GatewayRuntimeURLProtocol: URLProtocol {
         let statusCode = Self.responseStatusCodes.isEmpty ? 200 : Self.responseStatusCodes.removeFirst()
         let delay = Self.responseDelay
         if delay > 0 {
-            DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
+            let work = DispatchWorkItem { [weak self] in
                 self?.finishLoading(statusCode: statusCode)
             }
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
         } else {
             finishLoading(statusCode: statusCode)
         }
@@ -237,8 +238,6 @@ final class GatewayRuntimeURLProtocol: URLProtocol {
         return data.isEmpty ? nil : data
     }
 }
-
-extension GatewayRuntimeURLProtocol: @unchecked Sendable {}
 
 /// The accepted capability contract is deliberately test-owned.  Do not derive
 /// expectations from the production catalogs: doing so would hide a widened mode.
@@ -370,3 +369,7 @@ func gatewayForwardMIME() -> String {
         "Content-Transfer-Encoding: 8bit", "", "---------- Forwarded message ----------\r\nFrom: Display Name <person@example.com>\r\nSubject: Runtime subject\r\nTo: recipient@example.com"
     ].joined(separator: "\r\n")
 }
+
+#if !os(Linux)
+extension GatewayRuntimeURLProtocol: @unchecked Sendable {}
+#endif

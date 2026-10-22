@@ -618,6 +618,13 @@ extension GmailRequestProtocolTests {
                 #expect(GatewayRuntimeURLProtocol.requests.first?.method == "POST")
                 #expect(GatewayRuntimeURLProtocol.requests.first?.url.hasSuffix("/gmail/v1/users/me/messages/send") == true)
                 #expect(!result.errors.map(\.code).contains(GmailGatewayErrorCode.cancelled.rawValue))
+                #if os(Linux)
+                // FoundationNetworking drops the completion response when this
+                // protocol reports a transport error after headers. Preserve an
+                // unknown outcome with exactly one dispatch, never replay it.
+                #expect(result.exitCode == GmailGatewayExitCode.generalError.rawValue)
+                #expect(result.errors.map(\.code) == [GmailGatewayErrorCode.mutationOutcomeUnknown.rawValue])
+                #else
                 #expect(result.errors.map(\.code).contains(GmailGatewayErrorCode.mutationOutcomeUnknown.rawValue) == (statusCode >= 500))
 
                 if statusCode == 200 {
@@ -634,6 +641,7 @@ extension GmailRequestProtocolTests {
                     let expectedCode: GmailGatewayErrorCode = statusCode >= 500 ? .mutationOutcomeUnknown : .providerApiError
                     #expect(result.errors.map(\.code) == [expectedCode.rawValue])
                 }
+                #endif
             }
         }
 
@@ -840,14 +848,17 @@ private final class GmailDeadlineURLProtocol: URLProtocol {
 
     private func drip() {
         client?.urlProtocol(self, didLoad: Data(" ".utf8))
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.005) { [weak self] in
+        let work = DispatchWorkItem { [weak self] in
             guard Self.stoppedRequestCount == 0 else { return }
             self?.drip()
         }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.005, execute: work)
     }
 }
 
+#if !os(Linux)
 extension GmailDeadlineURLProtocol: @unchecked Sendable {}
+#endif
 
 private func assertPreflightEnvelope(_ envelope: GatewayEnvelope, code: String, path: [String]?) throws {
     #expect(envelope.exitCode == 2)
