@@ -12,6 +12,90 @@ final class ArchiveReadTests: XCTestCase {
         ArchiveReadProtocol.reset()
     }
 
+    func testSharedTransportKeepsByteLimitsPerTask() async throws {
+        let expected = Data("abcdef".utf8)
+        ArchiveReadProtocol.payload = expected
+        let outcomes = try await withThrowingTaskGroup(of: Bool.self) { group in
+            for maximum in [2, 64] {
+                group.addTask {
+                    try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
+                        do {
+                            let value = try GmailBoundedRead.get(
+                                gmailURLComponents(path: "/gmail/v1/users/me/messages/fixture-\(maximum)"),
+                                token: "synthetic-\(maximum)", maximumBytes: maximum)
+                            return value == expected
+                        } catch let error as GmailGatewayError where maximum == 2 && error.code == .resourceLimit {
+                            return false
+                        }
+                    }
+                }
+            }
+            var values: [Bool] = []
+            for try await value in group { values.append(value) }
+            return values
+        }
+        XCTAssertEqual(outcomes.filter { $0 }.count, 1)
+        XCTAssertEqual(outcomes.filter { !$0 }.count, 1)
+    }
+
+    func testCancellingOneOverlappingReadDoesNotCancelItsPeer() {
+        let started = expectation(description: "both tasks started")
+        started.expectedFulfillmentCount = 2
+        let finished = expectation(description: "both tasks completed")
+        finished.expectedFulfillmentCount = 2
+        let overlap = ArchiveReadOverlap()
+        let cancelled = GmailGatewayProviderCancellation()
+        let peer = GmailGatewayProviderCancellation()
+        defer { cancelled.cancel(); peer.cancel(); ArchiveReadProtocol.onLoad = nil }
+        ArchiveReadProtocol.onLoad = { instance in overlap.started(instance); started.fulfill() }
+        for (name, context) in [("cancel", cancelled), ("peer", peer)] {
+            DispatchQueue.global().async {
+                do {
+                    let data = try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
+                        try GmailGatewayProviderCancellationContext.$current.withValue(context) {
+                            try GmailBoundedRead.get(gmailURLComponents(path: "/gmail/v1/users/me/messages/\(name)"),
+                                token: "synthetic-\(name)", maximumBytes: 64)
+                        }
+                    }
+                    overlap.finished(name, outcome: data == Data("peer".utf8) ? "ok" : "unexpected")
+                } catch {
+                    overlap.finished(name, outcome: (error as? GmailGatewayError)?.code == .cancelled ? "cancelled" : "unexpected")
+                }
+                finished.fulfill()
+            }
+        }
+        wait(for: [started], timeout: 3)
+        cancelled.cancel()
+        overlap.completePeer()
+        wait(for: [finished], timeout: 3)
+        XCTAssertEqual(overlap.outcomes, ["cancel": "cancelled", "peer": "ok"])
+    }
+
+    #if !canImport(FoundationNetworking)
+    // Corelibs URLProtocol.wasRedirectedTo is unimplemented; this exercises Darwin routing.
+    func testSharedTransportRefusesRedirectBeforeFollowingIt() throws {
+        defer { ArchiveReadProtocol.onLoad = nil }
+        ArchiveReadProtocol.onLoad = { instance in
+            guard let url = instance.request.url else { return }
+            if url.path.hasSuffix("redirect-original"),
+               let target = URL(string: "https://gmail.googleapis.com/forbidden-redirect"),
+               let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: "HTTP/1.1",
+                   headerFields: ["Location": target.absoluteString]) {
+                instance.client?.urlProtocol(instance, wasRedirectedTo: URLRequest(url: target), redirectResponse: response)
+                instance.client?.urlProtocolDidFinishLoading(instance)
+            } else { instance.complete(Data("unexpected-follow".utf8)) }
+        }
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
+            XCTAssertThrowsError(try GmailBoundedRead.get(gmailURLComponents(path: "/gmail/v1/users/me/messages/redirect-original"),
+                token: "synthetic", maximumBytes: 64)) { error in
+                XCTAssertEqual((error as? GmailGatewayError)?.code, .providerApiError)
+                XCTAssertNotEqual((error as? GmailGatewayError)?.message, "Bounded Gmail read failed [gmailReadReason=timeout]")
+            }
+        }
+        XCTAssertEqual(ArchiveReadProtocol.urls.count, 1)
+    }
+    #endif
+
     private func service(token: String? = "synthetic") -> GmailGatewayService {
         let credential = CredentialConfig(id: "fixture", provider: .gmail, accessMode: .read,
             directAccessToken: token, oauthClientSecretPath: "/not-read", oauthClientSecretJSON: nil,
@@ -32,7 +116,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testFoldedContentTypePreservesBodyAndCharset() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             for header in ["text/plain;\r\n charset=ISO-2022-JP", "text/plain;\r\n\tcharset=\"UTF-8\""] {
                 ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": [
                     "partId": "", "mimeType": "text/plain", "headers": [["name": "Content-Type", "value": header]],
@@ -46,7 +130,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testBodyFailuresHaveFiniteReasonsWithoutPrivateContent() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             let invalid: [(Any, String)] = [
                 (["id": "private-wrong-id", "payload": [:]], "messageEnvelope"),
                 (["id": "m", "payload": ["partId": "", "mimeType": "text/plain", "body": ["size": 1]]], "missingData"),
@@ -79,7 +163,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testExpandedProviderRepresentationPreservesActualBytesAndDeclaredMetadata() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             // Public synthetic fixture matches only the observed size pair, not private content.
             let bytes = Data((String(repeating: "界", count: 391) + String(repeating: "a", count: 908)).utf8)
             XCTAssertEqual(bytes.count, 2081)
@@ -102,7 +186,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testExpandedPartsChargeActualTotalAndNeverTreatShrinkingAsComplete() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"mimeType":"multipart/alternative","parts":[{"partId":"0","mimeType":"text/plain","body":{"size":1,"data":"YWI"}},{"partId":"1","mimeType":"text/html","body":{"size":1,"data":"Y2Q"}}]}}"#.utf8)
             XCTAssertThrowsError(try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 3))
             let result = try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 4)
@@ -119,7 +203,7 @@ final class ArchiveReadTests: XCTestCase {
         let fixture = try GatewayRuntimeFixture()
         defer { fixture.remove() }
         ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"text/plain","body":{"size":1,"data":"YWI"}}}"#.utf8)
-        let result = await GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        let result = await GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             await GmailGatewaySDK(mode: .reader).execute(
                 document: #"{ messageBodyBytes(accountId: "personal", messageId: "m") { complete representationScope byteCount parts { providerDeclaredByteCount sizeStatus byteCount } } }"#,
                 variables: [:], environment: fixture.environment)
@@ -132,7 +216,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testProviderBodyAcceptsPaddedAndUnpaddedURLBase64WithExactSize() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             for encoded in ["-w", "-w==", "YWJj", "ZA", "ZA==", "YWI", "YWI="] {
                 let expected = try XCTUnwrap(dataFromBase64URLString(encoded))
                 ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": [
@@ -147,7 +231,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testMalformedBase64IsDistinctFromDecodedSizeAndNeverReturnsBody() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             for data in ["private?", "+w==", "abc=d"] {
                 ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": [
                     "partId": "", "mimeType": "text/plain", "body": ["size": 3, "data": data]]])
@@ -163,7 +247,7 @@ final class ArchiveReadTests: XCTestCase {
         let fixture = try GatewayRuntimeFixture()
         defer { fixture.remove() }
         ArchiveReadProtocol.payload = Data(#"{"id":"private-wrong-id","payload":{}}"#.utf8)
-        let result = await GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        let result = await GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             await GmailGatewaySDK(mode: .reader).execute(
                 document: #"{ messageBodyBytes(accountId: "personal", messageId: "m") { byteCount } }"#,
                 variables: [:], environment: fixture.environment)
@@ -173,7 +257,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testBodyBytesPreserveAlternativesCharsetAndExcludeAttachedText() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"multipart/mixed","parts":[{"partId":"0","mimeType":"multipart/alternative","parts":[{"partId":"0.0","mimeType":"text/plain","headers":[{"name":"Content-Type","value":"text/plain; charset=ISO-2022-JP"}],"body":{"size":3,"data":"YWJj"}},{"partId":"0.1","mimeType":"text/html","body":{"size":1,"data":"ZA"}}]},{"partId":"1","mimeType":"text/plain","filename":"original.txt","body":{"size":100000,"attachmentId":"not-fetched"}}]}}"#.utf8)
             let result = try service().messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 4)
             let parts = try XCTUnwrap(result["parts"] as? [[String: Any]])
@@ -191,7 +275,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testBodyBytesExternalPartUsesExactFixedEndpointAndBound() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.responses = [
                 Data(#"{"id":"m","payload":{"partId":"","mimeType":"text/plain","body":{"size":3,"attachmentId":"body-a"}}}"#.utf8),
                 Data(#"{"size":3,"data":"YWJj"}"#.utf8)]
@@ -202,7 +286,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testBodyBytesMissingAmbiguousMalformedAndDuplicatePartsFailWithoutPartialSuccess() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             for value in [
                 #"{"id":"wrong","payload":{"mimeType":"text/plain"}}"#,
                 #"{"id":"m","payload":{"partId":"","mimeType":"text/plain","body":{"size":1}}}"#,
@@ -220,7 +304,7 @@ final class ArchiveReadTests: XCTestCase {
         XCTAssertThrowsError(try service(token: nil).messageBodyBytes(accountId: "personal", messageId: "m", maxBytes: 0))
         XCTAssertThrowsError(try service(token: nil).messageBodyBytes(accountId: "personal", messageId: "../bad"))
         XCTAssertTrue(ArchiveReadProtocol.urls.isEmpty)
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"multipart/mixed","parts":[]}}"#.utf8)
             let result = try service().messageBodyBytes(accountId: "personal", messageId: "m")
             XCTAssertEqual((result["parts"] as? [[String: Any]])?.count, 0)
@@ -229,7 +313,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testExplicitZeroByteBodyMayOmitDataAndMimeIsCanonical() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.payload = Data(#"{"id":"m","payload":{"partId":"","mimeType":"TEXT/PLAIN","body":{"size":0}}}"#.utf8)
             let result = try service().messageBodyBytes(accountId: "personal", messageId: "m")
             let parts = try XCTUnwrap(result["parts"] as? [[String: Any]])
@@ -240,7 +324,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testBodyTraversalAndPartCountAreBounded() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             var nested: [String: Any] = ["partId": "0", "mimeType": "text/plain", "body": ["size": 0, "data": ""]]
             for _ in 0..<65 { nested = ["mimeType": "multipart/mixed", "parts": [nested]] }
             ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: ["id": "m", "payload": nested])
@@ -270,7 +354,7 @@ final class ArchiveReadTests: XCTestCase {
         let fixture = try GatewayRuntimeFixture()
         defer { fixture.remove() }
         ArchiveReadProtocol.payload = Data(#"{"size":0,"data":""}"#.utf8)
-        let result = await GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        let result = await GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             await GmailGatewaySDK(mode: .reader).execute(
                 document: #"{ attachmentBytes(accountId: "personal", messageId: "m", attachmentId: "a", maxBytes: 1) { byteCount dataBase64 } }"#,
                 variables: [:], environment: fixture.environment)
@@ -308,7 +392,7 @@ final class ArchiveReadTests: XCTestCase {
         XCTAssertEqual(buildMailMessage(account: account, object: object).attachments.first?.providerMetadata?.gmail?.partId, "")
         let typed = try JSONDecoder().decode(GmailAPIMessage.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertEqual(buildMailMessage(account: account, object: typed).attachments.first?.providerMetadata?.gmail?.partId, "")
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.payload = try JSONSerialization.data(withJSONObject: object)
             let result = try service().messagePartBytes(accountId: "personal", messageId: "m", partId: "")
             XCTAssertEqual(result["partId"] as? String, "")
@@ -317,7 +401,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testExactInlineNestedPartBytesAndDuplicateFilenames() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.payload = Data((#"{"id":"m","payload":{"partId":"","parts":["#
                 + #"{"partId":"1.0","filename":"same.pdf","body":{"size":3,"data":"YWJj"}},"#
                 + #"{"partId":"1.1","filename":"same.pdf","body":{"size":1,"data":"ZA"}}]}}"#).utf8)
@@ -332,7 +416,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testInlinePartRejectsAmbiguousRemoteMissingAndWrongIdentity() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             for payload in [
                 #"{"id":"wrong","payload":{"partId":"0","filename":"a","body":{"size":1,"data":"ZA"}}}"#,
                 #"{"id":"m","payload":{"partId":"0","filename":"","body":{"size":1,"data":"ZA"}}}"#,
@@ -350,7 +434,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testProviderAttemptBudgetAppliesBeforeDispatch() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             let budget = GmailGatewayProviderAttemptBudget(maximumRequests: 0)
             try GmailGatewayProviderAttemptBudgetContext.$current.withValue(budget) {
                 XCTAssertThrowsError(try service().messageIds(accountId: "personal", query: "")) { error in
@@ -362,7 +446,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testCancellationStopsOwnedReadInFlight() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             let cancellation = GmailGatewayProviderCancellation()
             ArchiveReadProtocol.onStart = {
                 // FoundationNetworking must cancel from outside its protocol queue.
@@ -380,7 +464,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testMessageListDoesNotHydrateAndCursorBindsEveryFilter() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.payload = Data(#"{"messages":[{"id":"m1","threadId":"t1"}],"nextPageToken":"next","resultSizeEstimate":2}"#.utf8)
             let page = try service().messageIds(accountId: "personal", query: "from:example.test", first: 5, includeSpamTrash: true)
             let info = try XCTUnwrap(page["pageInfo"] as? [String: Any])
@@ -403,7 +487,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testInvalidArgumentsAndCancelledContextNeverDispatch() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             for first in [0, 101] { XCTAssertThrowsError(try service().messageIds(accountId: "personal", query: "", first: first)) }
             XCTAssertThrowsError(try service().messageIds(accountId: "personal", query: "", after: "invalid"))
             XCTAssertThrowsError(try service().attachmentBytes(accountId: "personal", messageId: "../bad", attachmentId: "a"))
@@ -428,7 +512,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testAttachmentBytesAreExactBoundedAndNoLocalMaterialization() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.payload = Data(#"{"size":3,"data":"YWJj"}"#.utf8)
             let result = try service().attachmentBytes(accountId: "personal", messageId: "m", attachmentId: "a", maxBytes: 3)
             XCTAssertEqual(result["dataBase64"] as? String, "YWJj")
@@ -442,7 +526,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testMalformedOrDishonestAttachmentResponsesFail() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             for value in [#"{"size":4,"data":"YWJj"}"#, #"{"size":3,"data":"!!!!"}"#, #"{"size":-1,"data":""}"#, #"{}"#] {
                 ArchiveReadProtocol.payload = Data(value.utf8)
                 XCTAssertThrowsError(try service().attachmentBytes(accountId: "personal", messageId: "m", attachmentId: "a", maxBytes: 10))
@@ -451,7 +535,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testBoundedTransportRejectsDeclaredAndStreamedOversize() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             ArchiveReadProtocol.payload = Data(repeating: 65, count: 100)
             for declared in [nil, "100"] {
                 ArchiveReadProtocol.contentLength = declared
@@ -463,7 +547,7 @@ final class ArchiveReadTests: XCTestCase {
     }
 
     func testMalformedMetadataDoesNotHydrateOrAcceptMissingIdentity() throws {
-        try GmailBoundedRead.$protocolClasses.withValue([ArchiveReadProtocol.self]) {
+        try GmailBoundedRead.$transportSession.withValue(ArchiveReadProtocol.session) {
             for value in [#"{"messages":[{"id":"m","threadId":""}]}"#,
                           #"{"messages":[{"id":"m","threadId":"t"},{"id":"m","threadId":"t"}]}"#,
                           #"{"nextPageToken":""}"#] {
@@ -476,26 +560,51 @@ final class ArchiveReadTests: XCTestCase {
 }
 
 private class ArchiveReadProtocol: URLProtocol, @unchecked Sendable {
+    static let session = GmailBoundedReadHTTPSession.make(protocolClasses: [ArchiveReadProtocol.self])
     private static let lock = NSLock()
     nonisolated(unsafe) static var payload = Data()
     nonisolated(unsafe) static var responses: [Data] = []
     nonisolated(unsafe) static var contentLength: String?
+    nonisolated(unsafe) static var onLoad: (@Sendable (ArchiveReadProtocol) -> Void)?
     nonisolated(unsafe) static var onStart: (@Sendable () -> Void)?
     nonisolated(unsafe) private static var requests: [URL] = []
     static var urls: [URL] { lock.lock(); defer { lock.unlock() }; return requests }
-    static func reset() { lock.lock(); defer { lock.unlock() }; requests = []; responses = []; payload = Data(); contentLength = nil; onStart = nil }
+    static func reset() { lock.lock(); defer { lock.unlock() }; requests = []; responses = []; payload = Data(); contentLength = nil; onStart = nil; onLoad = nil }
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "gmail.googleapis.com" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         guard let url = request.url else { return }
         Self.lock.lock(); Self.requests.append(url); Self.lock.unlock()
+        if let onLoad = Self.onLoad { onLoad(self); return }
         if let onStart = Self.onStart { onStart(); return }
+        Self.lock.lock(); let bytes = Self.responses.isEmpty ? Self.payload : Self.responses.removeFirst(); Self.lock.unlock()
+        complete(bytes)
+    }
+    func complete(_ bytes: Data) {
+        guard let url = request.url else { return }
         let headers = Self.contentLength.map { ["Content-Length": $0] } ?? [:]
         guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers) else { return }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        Self.lock.lock(); let bytes = Self.responses.isEmpty ? Self.payload : Self.responses.removeFirst(); Self.lock.unlock()
         client?.urlProtocol(self, didLoad: bytes)
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+private final class ArchiveReadOverlap: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads: [String: ArchiveReadProtocol] = [:]
+    private var results: [String: String] = [:]
+    var outcomes: [String: String] { lock.lock(); defer { lock.unlock() }; return results }
+    func started(_ instance: ArchiveReadProtocol) {
+        guard let key = instance.request.url?.lastPathComponent else { return }
+        lock.lock(); reads[key] = instance; lock.unlock()
+    }
+    func completePeer() {
+        lock.lock(); let peer = reads.removeValue(forKey: "peer"); lock.unlock()
+        peer?.complete(Data("peer".utf8))
+    }
+    func finished(_ key: String, outcome: String) {
+        lock.lock(); results[key] = outcome; reads.removeValue(forKey: key); lock.unlock()
+    }
 }

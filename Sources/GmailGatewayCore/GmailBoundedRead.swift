@@ -5,7 +5,7 @@ import FoundationNetworking
 
 /// A single bounded read. No disk cache, cookies, redirects, or mutation retries.
 final class GmailBoundedRead: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    @TaskLocal static var protocolClasses: [AnyClass]?
+    @TaskLocal static var transportSession: URLSession?
 
     private let maximumBytes: Int
     private let lock = NSLock()
@@ -26,16 +26,12 @@ final class GmailBoundedRead: NSObject, URLSessionDataDelegate, @unchecked Senda
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 30
+        request.httpShouldHandleCookies = false
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let receiver = GmailBoundedRead(maximumBytes: maximumBytes)
-        let configuration = URLSessionConfiguration.ephemeral
-        if let protocolClasses { configuration.protocolClasses = protocolClasses }
-        configuration.urlCache = nil
-        configuration.httpCookieStorage = nil
-        configuration.httpShouldSetCookies = false
-        let session = URLSession(configuration: configuration, delegate: receiver, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
+        let session = transportSession ?? GmailBoundedReadHTTPSession.processLifetime
         let task = session.dataTask(with: request)
+        task.delegate = receiver
         let identifier = try GmailGatewayProviderCancellationContext.start(task, cancelsWhenExecutionIsCancelled: true)
         defer { GmailGatewayProviderCancellationContext.finish(identifier) }
         if identifier == nil { task.resume() }
