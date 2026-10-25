@@ -16,6 +16,6 @@ enum GmailBoundedReadHTTPSession {
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: configuration)
+        return URLSession(configuration: configuration, delegate: GmailBoundedReadHTTPDelegate(), delegateQueue: nil)
     }
 }
