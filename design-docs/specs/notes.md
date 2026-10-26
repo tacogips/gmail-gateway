@@ -73,30 +73,57 @@ Scope:
   and no expected value may change.
 - Do not change the other pin styles: gateway-sdk-kit `exact: "0.1.1"`,
   google-gateway-auth by `revision:`. Neither package has dependencies.
-- VERSION goes from `0.1.28` to `0.1.29` in the same final commit. Push to
-  `origin/main`. Do not publish a GitHub release or a Homebrew formula/tap.
+- VERSION goes from `0.1.28` to `0.1.29` in the same final commit. The
+  `gmailGatewayVersion()` literal in `GmailGatewayUtilities.swift` changes with
+  it, as earlier bump commits did. It stays an embedded literal and never reads
+  VERSION at runtime. This repo's `swift-tools-version: 6.0` does not change.
+  Push to `origin/main`. Do not publish a GitHub release or a Homebrew
+  formula/tap.
 
-Ordering gate (blocker BLK-1): google-service-gateway is pinned at revision
-`4cfef44b245893e6de4f30780c70fb0314da70eb`. That revision declares
-`.package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.1")`
-(`Package.swift:20`), which allows only `4.5.1..<5.0.0`, so resolution against
-`from: "5.0.3"` cannot succeed. The fix belongs upstream: google-service-gateway
-must first move to `from: "5.0.3"` and push. After that, gmail-gateway bumps only
-the `revision:` value to that pushed commit. Do not fork the dependency, add a
-local or path override, drop it, or vendor it. If no such upstream revision
-exists when implementation starts, stop before editing or committing anything
-and report BLK-1 with the constraint above.
+Ordering gate BLK-1 (resolved 2026-10-27): the old pin
+`4cfef44b245893e6de4f30780c70fb0314da70eb` declared swift-crypto
+`from: "4.5.1"`, which capped it below 5.0.0. Tag `v0.1.7` of
+google-service-gateway is commit `ed020e4a8f45a0acedaf46334e2a67677e3c3e63`.
+`git ls-remote` gives that full SHA. The issue text says `ed020e4f`; the first
+seven characters match and the full tag SHA is authoritative. At that commit,
+`Package.swift:20` declares swift-crypto `from: "5.0.3"`, and google-gateway-auth
+is pinned at `revision: "48e0112fb5eb057cf012194cfffaa2581ba29d76"`, which is
+the same pin as gmail-gateway. gmail-gateway changes only the
+google-service-gateway `revision:` value to the full tag SHA. The
+google-gateway-auth and gateway-sdk-kit pins stay as they are. The no-workaround
+rule still holds: no fork, path or mirror override, vendoring, or dropping a
+dependency. If resolution shows any dependency capping swift-crypto below 5,
+stop and report the exact constraint line.
 
-Once unblocked, the steps are:
+Version test rule: `embeddedVersionDoesNotDependOnAWorkingDirectoryVersionFile`
+(`Tests/GmailGatewayCoreTests/CommandTests.swift:53`) hard-codes a stale
+`"0.1.26"` and fails at HEAD. Its expected value must not be another version
+literal. The test reads the repository's `VERSION` file through a path built
+from `#filePath`, the same way `PersistentAuthLifecycleSubprocessTests.swift`
+does, and never through the working directory. It trims the value with
+`nonBlank` and requires `gmailGatewayVersion()` to equal it. Every later bump
+then only needs VERSION and the source literal to agree.
+`versionFlagReturnsVersionForAllBinaries` is not changed.
 
-1. Edit both manifest lines.
-2. Run `swift package update swift-crypto`, plus the google-service-gateway
-   resolution.
-3. Confirm the swift-crypto pin is 5.x and record the swift-asn1 pin.
-4. Check the upstream google-service-gateway diff for API changes that affect
-   `GmailGatewayCore`.
+Steps:
+
+1. Edit both manifest lines: swift-crypto becomes `from: "5.0.3"`, and the
+   google-service-gateway revision becomes `ed020e4a8f45a0acedaf46334e2a67677e3c3e63`.
+2. Run `swift package update swift-crypto google-service-gateway`. Never run a
+   bare `swift package update`. The Package.resolved diff may touch only
+   swift-crypto, its transitive swift-asn1, and google-service-gateway.
+3. Confirm swift-crypto resolves to 5.x and record the swift-asn1 pin.
+4. Review the upstream `4cfef44..ed020e4a` diff for public API changes used by
+   `GmailGatewayCore`, and fix any affected call sites without changing behavior.
 5. Fix any compile errors or deprecations from swift-crypto 5 without changing
-   the digest format.
-6. Run `swift build`, `mise run test`, `mise run lint`, and a Linux build and
-   test that compiles the `import Crypto` paths. If the Linux check cannot run,
-   report it as a verification gap. Do not count it as passing.
+   the digest format. The only API used is `SHA256.hash(data:)`.
+6. Apply the version bump and the version test rule.
+7. Run `swift build`, the full `swift test` (through `mise run test`), and
+   `mise run lint`. Also run a Linux build and test that compiles the
+   `import Crypto` paths. If the Linux check cannot run, report it as a
+   verification gap backed by reviewing the swift-crypto 5.0.0 release notes
+   for `SHA256`. Do not count it as passing.
+
+The plan `impl-plans/active/swift-crypto-5-migration.md` and its dispatch
+manifest `impl-plans/active/swift-crypto-5-dispatch.json` move to
+`impl-plans/completed/` together in the final commit.
