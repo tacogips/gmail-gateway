@@ -1,0 +1,132 @@
+{
+  "taskId": "swift-crypto-5",
+  "workflowMode": "issue-resolution",
+  "implementationBranch": "main",
+  "baseBranch": "main",
+  "remote": "origin",
+  "originalHead": "bb9ddfb3dbab970fd60e41468a4ecfc8347a6da0",
+  "designDocPaths": [
+    "design-docs/specs/notes.md"
+  ],
+  "evidenceRoot": "tmp/swift-crypto-5",
+  "reviewContext": {
+    "issueReference": "workflowInput issueTitle \"gmail-gateway: move to swift-crypto 5.x\" (no issueUrl or issueNumber)",
+    "userProblem": "The owner requires every Swift package in the Riela dependency graph to require and build against apple/swift-crypto 5.x (latest 5.0.3) so Riela can resolve a single 5.x version; gmail-gateway currently requires swift-crypto from 4.5.2 (Package.swift:20).",
+    "requiredOutcomes": [
+      "Package.swift requires .package(url: \"https://github.com/apple/swift-crypto.git\", from: \"5.0.3\")",
+      "Package.resolved pins swift-crypto 5.x",
+      "SHA256 outputs stay byte-for-byte identical (lowercase %02x hex for fingerprint, archive sha256, attachment prefix; base64url for PKCE)",
+      "VERSION, gmailGatewayVersion() literal (Sources/GmailGatewayCore/GmailGatewayUtilities.swift:5) and CommandTests.swift:53 expected literal become 0.1.29",
+      "swift build, mise run test and mise run lint pass",
+      "Single commit pushed to origin/main"
+    ],
+    "nonGoals": [
+      "No fork, vendor, path override, mirror config or removal of google-service-gateway to bypass BLK-1",
+      "No pin style changes; gateway-sdk-kit stays exact 0.1.1",
+      "No refactor of the #if canImport(CryptoKit) pattern; no removal of the unused import in GmailCredentialResolution.swift; no new crypto helpers",
+      "No change to expected digest values; no deleted, skipped or weakened version tests",
+      "gmailGatewayVersion() must not read VERSION at runtime; no version-generation scripts",
+      "No edits to design-docs/specs/architecture.md, Formula/, dist/, impl-plans/PROGRESS.json or other plan files",
+      "No GitHub release, build:homebrew, homebrew:formula or homebrew:tap-formula"
+    ],
+    "constraints": [
+      "TASK-001 gates on BLK-1: if google-service-gateway main does not declare a swift-crypto 5.x lower bound, stop with no repository edits except the plan Progress Log and report the SHA and exact constraint line",
+      "Use swift package update swift-crypto google-service-gateway (plus google-gateway-auth only if its revision must change); never a bare swift package update",
+      "Crypto product stays linked only on Linux; macOS keeps compiling against CryptoKit",
+      "Swift files stay under 1000 lines",
+      "Commit message has no AI attribution",
+      "All command logs go under tmp/swift-crypto-5 with exit codes in the plan Progress Log"
+    ],
+    "designDecisionsAndRationale": [
+      "Fix BLK-1 upstream and bump only the google-service-gateway revision pin, because revision 4cfef44 declares swift-crypto from 4.5.1 (allows only 4.5.1..<5.0.0) and the issue requires reporting such caps as blockers instead of working around them",
+      "google-gateway-auth revision changes only if upstream google-service-gateway pins a different revision, since SwiftPM requires identical revisions for the same package",
+      "Version bump follows the bb9ddfb convention of changing both VERSION and the embedded literal; the stale 0.1.26 test literal is corrected to keep embedded value equal to VERSION"
+    ],
+    "intentionalTradeoffs": [
+      "Linux build (V6) may be unavailable locally; it is logged as a verification gap rather than counted as passing",
+      "CommandTests.swift:53 expected literal is edited even though tests are otherwise the oracle, because it is pre-existing stale data and must equal VERSION"
+    ],
+    "supportedEdgeCases": [
+      "BLK-1 still open: blocked stop with no commit",
+      "Upstream google-service-gateway public API changes: fixed only at GmailGatewayCore call sites with behavior unchanged and logged",
+      "Digest call site changed in TASK-003: add SHA256(\"abc\") known-answer assertion in the existing feature test file"
+    ],
+    "outOfScopeEdgeCases": [
+      "Stale 0.1.1 text in design-docs/specs/architecture.md",
+      "Homebrew formula, tap or release publication",
+      "Adding a Linux mise task"
+    ],
+    "sourcePaths": [
+      "Package.swift",
+      "Package.resolved",
+      "VERSION",
+      "Sources/GmailGatewayCore/GmailGatewayUtilities.swift",
+      "Sources/GmailGatewayCore/GmailOAuthClientFingerprint.swift",
+      "Sources/GmailGatewayCore/GmailArchiveReads.swift",
+      "Sources/GmailGatewayCore/MessageFileDownloads.swift",
+      "Sources/GmailGatewayCore/GmailOAuthBootstrap.swift",
+      "Sources/GmailGatewayCore/GmailCredentialResolution.swift",
+      "Tests/GmailGatewayCoreTests/CommandTests.swift",
+      "mise.toml",
+      "design-docs/specs/notes.md",
+      "impl-plans/active/swift-crypto-5-migration.md"
+    ]
+  },
+  "acceptedDependencies": [],
+  "plans": [
+    {
+      "planId": "PLAN-SC5-001",
+      "planPath": "impl-plans/active/swift-crypto-5-migration.md",
+      "dependsOn": [],
+      "writePaths": [
+        "Package.swift",
+        "Package.resolved",
+        "VERSION",
+        "Sources/GmailGatewayCore",
+        "Tests/GmailGatewayCoreTests",
+        "impl-plans/active/swift-crypto-5-migration.md",
+        "tmp/swift-crypto-5"
+      ],
+      "sharedPaths": [],
+      "sharedPathNotes": [
+        {
+          "path": "Sources/GmailGatewayCore/GmailGatewayUtilities.swift",
+          "intendedEdit": "Change only the gmailGatewayVersion() literal at line 5 from \"0.1.28\" to \"0.1.29\""
+        },
+        {
+          "path": "Tests/GmailGatewayCoreTests/CommandTests.swift",
+          "intendedEdit": "Change only the expected literal at line 53 from \"0.1.26\" to \"0.1.29\""
+        },
+        {
+          "path": "VERSION",
+          "intendedEdit": "Change 0.1.28 to 0.1.29, single line with trailing newline"
+        }
+      ],
+      "artifactRoots": [
+        "tmp/swift-crypto-5"
+      ],
+      "acceptanceCriteria": [
+        "TASK-001 records the google-service-gateway main SHA and its swift-crypto constraint line; if not 5.x, stop with only a Progress Log edit and report BLK-1",
+        "On the pass path, baseline swift test --filter CommandTests exit code and failing tests are recorded in tmp/swift-crypto-5/baseline-test.log and the Progress Log",
+        "Package.swift swift-crypto requirement is from: \"5.0.3\" and google-service-gateway revision equals the recorded GSG_NEW",
+        "Package.resolved swift-crypto version starts with 5. and gateway-sdk-kit stays 0.1.1",
+        "swift build exits 0 with no new swift-crypto or SHA256 warnings",
+        "No expected digest value changes; existing digest tests pass",
+        "gmailGatewayVersion() returns \"0.1.29\" and VERSION is 0.1.29; both CommandTests version tests pass",
+        "mise run test and mise run lint exit 0; Linux build/test passes or is logged as a verification gap",
+        "git diff --stat origin/main..HEAD shows only the TASK-004 step 3 files; git log origin/main -1 equals local HEAD"
+      ],
+      "verification": [
+        "swift package resolve",
+        "python3 -I -c \"import json;print([p for p in json.load(open('Package.resolved'))['pins'] if p['identity'] in ('swift-crypto','swift-asn1','google-service-gateway','google-gateway-auth','gateway-sdk-kit')])\"",
+        "swift build",
+        "swift test --filter CommandTests",
+        "grep -rn '0\\.1\\.28' Sources Tests VERSION",
+        "mise run test",
+        "mise run lint",
+        "swift build --scratch-path .build-linux && swift test --scratch-path .build-linux",
+        "git diff --stat origin/main..HEAD"
+      ]
+    }
+  ]
+}

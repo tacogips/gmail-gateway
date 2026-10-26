@@ -51,3 +51,52 @@ or unrelated running workflow was modified. Release acceptance still requires fu
 tests, SwiftLint, macOS archives, Calendar notarization, Homebrew tests/audit, and
 published API metadata verification. Nix checks are unavailable: this checkout has
 no flake/package definitions and the local `nix` executable is absent.
+
+## swift-crypto 5.x migration (2026-10-27)
+
+Goal: Package.swift requires
+`.package(url: "https://github.com/apple/swift-crypto.git", from: "5.0.3")` and
+Package.resolved pins swift-crypto 5.x, so the Riela dependency graph resolves
+one 5.x version. No behavior change.
+
+Scope:
+
+- The only swift-crypto use is `SHA256.hash(data:)`, in
+  `GmailOAuthClientFingerprint.swift`, `GmailArchiveReads.swift`
+  (`archiveSHA256`), `MessageFileDownloads.swift`
+  (`attachmentStorageFilenamePrefix`), and `GmailOAuthBootstrap.swift`
+  (PKCE `codeChallenge`). `GmailCredentialResolution.swift` imports the module
+  but calls no crypto API. The `Crypto` product is linked only on Linux. macOS
+  builds use CryptoKit, so only a Linux build compiles against swift-crypto.
+- Digest output (lowercase hex, or base64url for PKCE) must stay byte-for-byte
+  identical. The existing tests in `Tests/GmailGatewayCoreTests` are the oracle,
+  and no expected value may change.
+- Do not change the other pin styles: gateway-sdk-kit `exact: "0.1.1"`,
+  google-gateway-auth by `revision:`. Neither package has dependencies.
+- VERSION goes from `0.1.28` to `0.1.29` in the same final commit. Push to
+  `origin/main`. Do not publish a GitHub release or a Homebrew formula/tap.
+
+Ordering gate (blocker BLK-1): google-service-gateway is pinned at revision
+`4cfef44b245893e6de4f30780c70fb0314da70eb`. That revision declares
+`.package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.1")`
+(`Package.swift:20`), which allows only `4.5.1..<5.0.0`, so resolution against
+`from: "5.0.3"` cannot succeed. The fix belongs upstream: google-service-gateway
+must first move to `from: "5.0.3"` and push. After that, gmail-gateway bumps only
+the `revision:` value to that pushed commit. Do not fork the dependency, add a
+local or path override, drop it, or vendor it. If no such upstream revision
+exists when implementation starts, stop before editing or committing anything
+and report BLK-1 with the constraint above.
+
+Once unblocked, the steps are:
+
+1. Edit both manifest lines.
+2. Run `swift package update swift-crypto`, plus the google-service-gateway
+   resolution.
+3. Confirm the swift-crypto pin is 5.x and record the swift-asn1 pin.
+4. Check the upstream google-service-gateway diff for API changes that affect
+   `GmailGatewayCore`.
+5. Fix any compile errors or deprecations from swift-crypto 5 without changing
+   the digest format.
+6. Run `swift build`, `mise run test`, `mise run lint`, and a Linux build and
+   test that compiles the `import Crypto` paths. If the Linux check cannot run,
+   report it as a verification gap. Do not count it as passing.
