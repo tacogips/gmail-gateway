@@ -1,6 +1,6 @@
 # swift-crypto 5.x Migration
 
-**Status**: In Progress
+**Status**: Completed (Linux build/test recorded as a verification gap)
 **Plan ID**: PLAN-SC5-001
 **Depends On**: none (BLK-1 resolved by google-service-gateway tag v0.1.7)
 **Design Reference**: `design-docs/specs/notes.md#swift-crypto-5x-migration-2026-10-27`
@@ -172,11 +172,11 @@ truncated or missing log does not count as a pass.
 
 **Completion Criteria**:
 
-- [ ] The tag SHA, the upstream swift-crypto line, and the google-gateway-auth
+- [x] The tag SHA, the upstream swift-crypto line, and the google-gateway-auth
   line are recorded.
-- [ ] Baseline hashes, the CommandTests exit code, and failing test names are
+- [x] Baseline hashes, the CommandTests exit code, and failing test names are
   recorded.
-- [ ] Release-note findings for SHA256 are recorded.
+- [x] Release-note findings for SHA256 are recorded.
 
 ### TASK-002: Manifest and resolution
 
@@ -213,11 +213,11 @@ truncated or missing log does not count as a pass.
 
 **Completion Criteria**:
 
-- [ ] `grep -n 'swift-crypto\|google-service-gateway' Package.swift` shows
+- [x] `grep -n 'swift-crypto\|google-service-gateway' Package.swift` shows
   `from: "5.0.3"` and `ed020e4a8f45a0acedaf46334e2a67677e3c3e63`.
-- [ ] The Package.resolved diff contains only the allowed entries.
+- [x] The Package.resolved diff contains only the allowed entries.
   swift-crypto is `5.x.y`.
-- [ ] Upstream API-diff findings are recorded. "None used" is a valid finding.
+- [x] Upstream API-diff findings are recorded. "None used" is a valid finding.
 
 ### TASK-003: Compile fixes with no behavior change
 
@@ -258,10 +258,10 @@ truncated or missing log does not count as a pass.
 
 **Completion Criteria**:
 
-- [ ] `swift build` exits 0.
-- [ ] `grep -iE 'warning:.*(SHA256|Crypto|deprecated)' tmp/swift-crypto-5/logs/build-macos.log`
+- [x] `swift build` exits 0.
+- [x] `grep -iE 'warning:.*(SHA256|Crypto|deprecated)' tmp/swift-crypto-5/logs/final-build.log`
   shows no warning from these files.
-- [ ] The Linux build and test exit 0, or an explicit verification gap is
+- [x] The Linux build and test exit 0, or an explicit verification gap is
   recorded.
 
 ### TASK-004: Version bump and version test fix
@@ -303,11 +303,11 @@ Test cases:
 
 **Completion Criteria**:
 
-- [ ] `cat VERSION` prints `0.1.29`.
-- [ ] `gmailGatewayVersion()` returns `"0.1.29"`.
-- [ ] `grep -n '"0.1.2[0-9]"' Tests/GmailGatewayCoreTests/CommandTests.swift`
+- [x] `cat VERSION` prints `0.1.29`.
+- [x] `gmailGatewayVersion()` returns `"0.1.29"`.
+- [x] `grep -n '"0.1.2[0-9]"' Tests/GmailGatewayCoreTests/CommandTests.swift`
   prints nothing.
-- [ ] `swift test --filter CommandTests` exits 0.
+- [x] `swift test --filter CommandTests` exits 0.
 
 ### TASK-005: Full verification and Progress Log
 
@@ -378,3 +378,16 @@ as passed or as a gap.
     still uncommitted from the planning step.
   - TASK-003 now also records the host and container `swift --version` and
     the swift:6.3 image digest, from the low-severity review note.
+- 2026-10-27: Implementation completed against the accepted design and this plan.
+  - TASK-001 tag gate: `git ls-remote https://github.com/tacogips/google-service-gateway.git refs/tags/v0.1.7 'refs/tags/v0.1.7^{}'` exited 0; tag SHA is `ed020e4a8f45a0acedaf46334e2a67677e3c3e63`. The fetched upstream manifest declares swift-crypto `from: "5.0.3"` and google-gateway-auth revision `48e0112fb5eb057cf012194cfffaa2581ba29d76`. Logs: `tmp/swift-crypto-5/PLAN-SC5-001/logs/gate-ls-remote.log`, `upstream-Package.swift.txt`.
+  - TASK-001 baseline hashes: Package.swift `2c31b79db3042afb98e7f0096728ea0173973f7162e4ec84dd6827e9b10c1108`; Package.resolved `269e8c7494b4ef5441e2b9461286d33729c1874ad5225cd85e4e5bc7b0b028a5`; VERSION `5f30f682ec06500cbc89e949d22b27383646e8e7004b8714841c793a41ce8aec`; GmailGatewayUtilities.swift `930b5d1f95a63fbb1c71f6d8a120945617cd8fb63e95d497fc95e1f0960a4012`; CommandTests.swift `0e189b7d592813f3fbd60401fb931d5c0c4def4699d07b5f1a763d71bb72f67c`.
+  - Baseline `swift test --filter CommandTests` exited 1 with 46 tests and one pre-existing failure: `embeddedVersionDoesNotDependOnAWorkingDirectoryVersionFile` expected `0.1.26` while the embedded value was `0.1.28`. Log: `tmp/swift-crypto-5/PLAN-SC5-001/logs/baseline-commandtests.log`.
+  - swift-crypto 5.0.0 release notes reviewed; SHA256, Digest, and HashFunction APIs are not renamed or removed. The span API adds overloads; the existing `SHA256.hash(data:)` use remains. Log: `tmp/swift-crypto-5/PLAN-SC5-001/logs/swift-crypto-5.0.0-notes.log`.
+  - TASK-002 `swift package update swift-crypto google-service-gateway` exited 0. Package.swift now requires swift-crypto from 5.0.3 and pins google-service-gateway to the full v0.1.7 SHA. Package.resolved changed only originHash, google-service-gateway, and swift-crypto; swift-asn1 remained 1.7.3. swift-crypto resolves to 5.0.3. gateway-sdk-kit 0.1.1 and google-gateway-auth revision 48e0112f remain unchanged. Logs: `tmp/swift-crypto-5/PLAN-SC5-001/logs/package-update.log`, `v1-resolve.log`, `v2-pins.log`, `resolved-diff.log`.
+  - Upstream source diff changes the public `Version.current` value, but GmailGatewayCore has no use of that symbol. Its used credential-store types and APIs are unchanged. Log: `tmp/swift-crypto-5/PLAN-SC5-001/logs/upstream-diff.log`.
+  - TASK-003 final macOS `swift build` exited 0. No SHA256, Crypto, or deprecation warnings matched in the final build log. No crypto call site or digest expectation changed. Logs: `tmp/swift-crypto-5/PLAN-SC5-001/logs/final-build.log`, `final-build-crypto-warning-search.log`.
+  - Linux verification gap: Docker invocation exited 125 because the daemon failed to write its containerd metadata database (`input/output error`) and the image was unavailable. The documented `container run` fallback reached image fetch/unpack, then exited 1 with `No space left on device` while unpacking the 3.7 GB image; no Linux build or tests started. Image index digest: `sha256:c2f3ac2eb806ce43f68859c3d52bd3bb1cfc88672fb3a948b76e136d98e39278`; image metadata declares Swift 6.3.3. Host Swift: 6.3.3. Logs: `tmp/swift-crypto-5/PLAN-SC5-001/logs/linux-build-test.log`, `linux-container-build-test.log`, `container-image-inspect.log`, `host-swift-version.log`.
+  - TASK-004 changed VERSION and the embedded version to 0.1.29. The test now reads VERSION from a three-parent `#filePath`-anchored URL and has no version literal. Filtered CommandTests passed 46/46. `mise run test` exited 0 with 185 tests in 8 suites and the Swift smoke tests passed. Changed-file `swiftlint lint --strict --quiet --no-cache` exited 0. `mise run lint` exited 0; it reported five warnings in untouched baseline files (three Statement Position warnings in GmailOAuthBootstrap.swift, one trailing-newline warning in GmailGatewayCLIHelp.swift, and one type-body-length warning in GmailRequestProtocolTests.swift). Logs: `tmp/swift-crypto-5/PLAN-SC5-001/logs/commandtests-after.log`, `v4-test.log`, `changed-files-swiftlint.log`, `v5-lint.log`.
+  - Stale-version search returned no matches (grep exit 1, expected). Final source hashes: Package.swift `4793b5694fd76ad30b7fdb7f2f42849a3d516bdbd9068760dc13274c867b37b2`; Package.resolved `f8521d9cde8c740f20152fcb87981f2ebbf21dc273e108444c6a314bd3f5f21e`; VERSION `04fa6fd3d0e24d0cf4a85675f94b78ab88c4b469dd242527632da6d864eaf932`; GmailGatewayUtilities.swift `74db523ae9ae971f07e01cc93280f23c2829a645d836718bc5e78bebf71b96c1`; CommandTests.swift `02446fa2cd3708ce710b6bc8a085a5640c37fa652bb32e094d9a15171728d1a8`.
+  - The implementation did not edit design notes, the dispatch manifest, or other plan files; it did not commit, push, or archive. Finalization and plan archival remain downstream workflow steps.
+  - TASK-005 V7: `git status --porcelain` and `git diff --stat` both exited 0. The status lists only Package.swift, Package.resolved, VERSION, GmailGatewayUtilities.swift, CommandTests.swift, and this plan. The change summary is 6 files, 45 insertions, and 24 deletions. Logs: `tmp/swift-crypto-5/PLAN-SC5-001/logs/v7-status.log`, `v7-diff-stat.log`.

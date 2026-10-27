@@ -49,8 +49,16 @@ import Testing
     #expect(GmailGatewayCLI(mode: .directSender).run(arguments: ["version"], environment: [:]).stdout == expected)
 }
 
-@Test func embeddedVersionDoesNotDependOnAWorkingDirectoryVersionFile() {
-    #expect(gmailGatewayVersion() == "0.1.26")
+@Test func embeddedVersionDoesNotDependOnAWorkingDirectoryVersionFile() throws {
+    let versionURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("VERSION")
+    let versionFile = try String(contentsOf: versionURL, encoding: .utf8)
+    let expected = try #require(nonBlank(versionFile))
+
+    #expect(gmailGatewayVersion() == expected)
 }
 
 @Test func tokenRefreshOAuthClientUsesConfiguredTokenURIAndAllowsPublicClient() throws {
