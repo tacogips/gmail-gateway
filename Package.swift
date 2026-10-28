@@ -20,7 +20,7 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-crypto.git", from: "5.0.3"),
     .package(url: "https://github.com/tacogips/google-gateway-auth.git", revision: "48e0112fb5eb057cf012194cfffaa2581ba29d76"),
     .package(url: "https://github.com/tacogips/gateway-sdk-kit.git", exact: "0.1.1"),
-    .package(url: "https://github.com/tacogips/google-service-gateway.git", revision: "ed020e4a8f45a0acedaf46334e2a67677e3c3e63")
+    .package(url: "https://github.com/tacogips/google-service-gateway.git", revision: "790a6b21def1a11fe50fae57ce503b16d3b002c9")
   ],
   targets: [
     .target(name: "GmailGatewayPlatform"),
