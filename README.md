@@ -1,0 +1,331 @@
+# gmail-gateway
+
+### OAuth token state and legacy migration
+
+File-backed default tokens live at `${XDG_STATE_HOME:-~/.local/state}/gmail-gateway/credentials/<profile>.json`.
+Configuration stays at `${XDG_CONFIG_HOME:-~/.config}/gmail-gateway/config.toml`.
+Empty or relative XDG base-directory values are ignored. Explicit token paths,
+`GMAIL_GATEWAY_CREDENTIAL_DIR`, inline JSON, and secure-vault credentials retain their existing precedence and location.
+
+For the historical no-config `gmail-personal` profile only, the former
+`<config-directory>/tokens/gmail-personal.json` is copied securely to the state
+default when no state token exists. An existing state token always wins.
+The old file is retained as a recovery copy, never refreshed there. A durable
+`.migration-complete` marker prevents it being reactivated after revoke or restart;
+do not delete that marker while retaining an old recovery copy. No explicit path
+is migrated, and vault-backed profiles do not trigger migration.
+New token and migration files use `0600`, and token directories use `0700`.
+Migration rejects linked, non-regular, or foreign-owned files and unsafe parent paths.
+If migration fails, it reports both paths without exposing token values; the old
+file remains available for deliberate recovery. Configuration loading alone never migrates files.
+
+Swift command-line gateway for Gmail workflows
+
+## Development
+
+```bash
+mise install
+mise run build
+mise run test
+swift run gmail-gateway-reader --help
+swift run gmail-gateway-draft --help
+swift run gmail-gateway-sender --help
+swift run gmail-gateway-threads --help
+swift run gmail-gateway-message-box --help
+```
+
+The package uses Swift Package Manager with:
+
+- Library target: `GmailGatewayCore`
+- Executable targets: `GmailGatewayReader`, `GmailGatewayDraft`, `GmailGatewaySender`,
+  `GmailGatewayThreads`, `GmailGatewayMessageBox`
+- Installed executables: `gmail-gateway-reader`, `gmail-gateway-draft`, `gmail-gateway-sender`,
+  `gmail-gateway-threads`, `gmail-gateway-message-box`
+
+## Binary Capabilities
+
+Each binary exposes a strictly separate slice of the GraphQL surface:
+
+## Catalog-driven GraphQL and SDK
+
+GraphQL is parsed, validated, authorized, and projected by the pinned
+`GatewaySDKKit` runtime. `GmailGatewaySchema.swift` is the executable schema source of
+truth; the legacy substring scanner and flat `threads(accountId: ...)` form are removed.
+`threads` accepts exactly one required `input: ThreadSearchInput!` argument, and every
+mutation accepts one required input object.
+
+Each GraphQL form validates its exact positional arguments and flag set before loading
+variables or contacting Gmail. Unknown, duplicate, or inapplicable flags and trailing
+positionals fail with CLI usage error, including for destructive catalog operations.
+
+Raw GraphQL accepts JSON variables, or use the catalog without credentials:
+
+```bash
+swift run gmail-gateway-reader graphql query --query \
+  'query Threads($input: ThreadSearchInput!) { threads(input: $input) { totalCount } }' \
+  --variables '{"input":{"accountId":"personal","first":10}}'
+swift run gmail-gateway-reader graphql schema
+swift run gmail-gateway-reader graphql search 'threads|labels' --include-referenced-types --limit 20
+swift run gmail-gateway-reader graphql operation threads --variables '{"input":{"accountId":"personal"}}'
+```
+
+Swift callers can use `GmailGatewaySDK(mode:)`. Its `catalog`, `schemaSDL()`, and
+`searchSchema` expose the same mode-authorized catalog as the CLI. `execute` uses the
+shared executor and explicit environment, while `invoke` builds named GraphQL operations
+from `gmailFull` before that executor applies mode authorization, so known denied
+operations return `CAPABILITY_DENIED` before resolver or provider dispatch. SDK envelopes
+are canonical, and no SDK execution reads process-global state.
+SDK execution requires `GMAIL_GATEWAY_CONFIG` in that supplied environment and rejects
+home-directory defaults; CLI-only default path discovery remains at the CLI boundary.
+
+All five binaries share one read surface: `accounts`, `account`, `threads`, `thread`,
+`message`, `messageFileSet`, `attachment`, `labels`, and `profile`. Each then owns exactly
+one group of mutations, and rejects every other group with an error naming the binary that
+owns it.
+
+| Binary | Owns | Access mode |
+|--------|------|-------------|
+| `gmail-gateway-reader` | Nothing; reads only | `read` |
+| `gmail-gateway-draft` | `createDraft`, `createReplyDraft`, `createForwardDraft`, `updateDraft`, `deleteDraft`, `drafts`, `draft` | `read_send` |
+| `gmail-gateway-sender` | `sendMessage`, `replyMessage`, `forwardMessage`, `sendDraft`, plus the whole draft surface | `read_send` |
+| `gmail-gateway-threads` | Mailbox mutation: label changes, trash/untrash, label management, permanent delete | `read_modify` (`full` for permanent delete) |
+| `gmail-gateway-message-box` | Mail ingestion: `importMessage`, `insertMessage` | `read_modify` |
+
+Operations absent from a binary's authorized GraphQL catalog, including send mutations
+submitted to `gmail-gateway-draft` and draft operations submitted to
+`gmail-gateway-reader`, return `CAPABILITY_DENIED` before resolver or provider dispatch.
+The retained `SEND_DISABLED_IN_READER` and `SEND_DISABLED_IN_DRAFT_GATEWAY` error codes
+are service-level compatibility codes; they are not catalog-authorization results. The
+draft binary therefore has no GraphQL path that can transmit mail.
+
+SDK cancellation stops safe reads, retries, and later provider work. A mutation already
+dispatched to Gmail waits up to the 30-second absolute response deadline: a definitive
+2xx remains successful, a definitive HTTP failure remains a provider error, and a lost
+or late response returns non-retryable `MUTATION_OUTCOME_UNKNOWN`. Do not automatically
+retry that outcome. At the exact deadline boundary, an accepted low-severity race can
+report the unknown outcome even when a definitive response completes concurrently.
+
+`createReplyDraft` and `createForwardDraft` build the same threaded reply and forward
+content as `replyMessage` and `forwardMessage`, but always stop at draft creation, so the
+draft binary can prepare threaded mail without gaining a send path.
+
+### Draft, then send
+
+`labels` is the only way to discover the label ids that the `threads` `labelIds` filter
+accepts, and `profile` reports the authenticated mailbox and its totals:
+
+```bash
+swift run gmail-gateway-reader graphql --query 'query { labels(accountId: "personal") { id name type } }'
+swift run gmail-gateway-reader graphql --query 'query { profile(accountId: "personal") { emailAddress messagesTotal threadsTotal } }'
+```
+
+Prepare a draft with the draft binary, then send it by id with the sender:
+
+```bash
+swift run gmail-gateway-draft graphql --query '
+mutation {
+  createReplyDraft(input: {
+    accountId: "personal",
+    messageId: "1930f0c2b1a4d5e6",
+    replyAll: true,
+    textBody: "Thanks, sending the report shortly."
+  }) { draftId }
+}'
+
+swift run gmail-gateway-sender graphql --query '
+mutation { sendDraft(input: { accountId: "personal", draftId: "r-1234567890" }) { operation status draftId messageId threadId } }'
+```
+
+### Updating a draft
+
+`updateDraft` maps to the Gmail `drafts.update` draft-replacement call, so the gateway
+rebuilds the draft from the merged state:
+
+- header and body fields left out of the input keep the value already on the draft
+- supplying `textBody` and/or `htmlBody` replaces the entire body with exactly what was
+  supplied, so an update never leaves a stale HTML or text part behind
+- attachments already on the draft are all retained unless `keepAttachmentIds` is given;
+  when given, only the listed provider attachment ids survive, and `[]` drops all of them
+- `attachmentPaths` adds validated local files on top of what is retained
+- the draft keeps its provider thread, `In-Reply-To`, and `References` headers
+- the merged result is validated exactly like `createDraft`, so the draft must still end up
+  with at least one recipient and a body; a recipient-less draft created elsewhere has to be
+  given a recipient in the same `updateDraft` call
+
+Replace every attachment on a draft, keeping its headers and body:
+
+```bash
+swift run gmail-gateway-draft graphql --query '
+mutation {
+  updateDraft(input: {
+    accountId: "personal",
+    draftId: "r-1234567890",
+    keepAttachmentIds: [],
+    attachmentPaths: ["/allowed/send/root/report.pdf"]
+  }) { operation status draftId messageId rejectedAttachments { path code reason } }
+}'
+```
+
+Provider attachment ids for `keepAttachmentIds` come from the `draft` query:
+
+```bash
+swift run gmail-gateway-draft graphql --query '
+query {
+  draft(accountId: "personal", draftId: "r-1234567890") {
+    id
+    message { attachments { id filename providerMetadata { gmail { attachmentId } } } }
+  }
+}'
+```
+
+Delete a draft:
+
+```bash
+swift run gmail-gateway-draft graphql --query '
+mutation { deleteDraft(input: { accountId: "personal", draftId: "r-1234567890" }) { operation status draftId } }'
+```
+
+Swift target names and type names must be valid Swift identifiers. If the project
+name contains hyphens, keep `PROJECT_NAME` and `EXECUTABLE_NAME` hyphenated as
+needed, but use identifier-safe values such as `GmailGatewayCore` and
+`GmailGatewayReader` for Swift module/type variables.
+
+## Access Modes
+
+A credential's `access_mode` decides which capabilities it holds; the binary decides which
+it exposes. Both must allow an operation for it to run.
+
+| Access mode | Scopes | Grants |
+|-------------|--------|--------|
+| `read` | `gmail.readonly` | read |
+| `read_send` | `gmail.readonly`, `gmail.compose`, `gmail.send` | read, send |
+| `read_modify` | `gmail.readonly`, `gmail.modify`, `gmail.insert` | read, modify, insert |
+| `full` | `https://mail.google.com/` | read, send, modify, insert, permanent delete |
+
+`read_send` cannot mutate stored mail and `read_modify` cannot send, so a credential scoped
+for one workflow cannot be borrowed for the other.
+
+## Persistent OAuth Setup
+
+`gmail-gateway-reader`, `gmail-gateway-sender`, and `gmail-gateway-draft` can
+keep a Desktop OAuth client and token in the macOS Keychain. Run setup once,
+then login for the executable's fixed access mode:
+
+```bash
+gmail-gateway-reader auth setup --credential gmail-personal --client-secret-path ./google-client.json
+gmail-gateway-reader auth login --credential gmail-personal
+gmail-gateway-reader auth status --credential gmail-personal
+gmail-gateway-reader auth revoke --credential gmail-personal --confirm-credential gmail-personal
+```
+
+Use the sender or draft executable for a `read_send` credential. Setup accepts
+only a Google Desktop client JSON file. Replacing a stored client requires both
+`--replace` and an exact `--confirm-credential`; replacing it clears its token.
+Status and command output redact OAuth secrets and Keychain identifiers.
+
+Explicit credential environment variables and configured credential paths still
+take precedence. Existing token files without exact scope metadata and a client
+fingerprint require one re-login. `gmail-gateway-threads` and
+`gmail-gateway-message-box` retain their legacy authentication contract and do
+not expose `auth setup`. For a Keychain-only TOML credential, omit both
+`oauth_client_secret_path` and `token_store_path`; omitted paths are synthesized
+fallbacks, so the persistent profile is selected first.
+
+The implicit configuration also works for GraphQL reads after login. Token
+selection prefers credential `TOKEN_STORE_JSON` environment overrides, then
+`TOKEN_STORE_PATH` overrides, then configured paths. An explicit `--config`
+does not override these credential environment variables. Inline token JSON is
+immutable: unset its exact variable before logging in. Login output reports
+`tokenSource`, `tokenStorePath` for file storage, and `tokenSourceHint` describing
+how subsequent commands can select the written token. Authentication errors
+include this source information and the selected override variable name.
+
+**Permanent delete requires `full`.** `deleteThread`, `deleteMessage`, and
+`batchDeleteMessages` are irreversible, bypass Trash, and cannot be undone; Gmail accepts
+only its full-access scope for them. Prefer `trashThread` and `trashMessage`, which are
+reversible with `untrashThread` and `untrashMessage` and need only `read_modify`.
+
+## Mailbox Mutation
+
+`gmail-gateway-threads` changes stored mail and never composes, sends, or ingests it:
+
+```bash
+# Move a thread out of the inbox and tag it, in one call
+swift run gmail-gateway-threads graphql --query '
+mutation {
+  modifyThreadLabels(input: {
+    accountId: "personal",
+    threadId: "1930f0c2b1a4d5e6",
+    addLabelIds: ["Label_9"],
+    removeLabelIds: ["INBOX"]
+  }) { operation status threadId labelIds }
+}'
+
+# Reversible removal
+swift run gmail-gateway-threads graphql --query '
+mutation { trashMessage(input: { accountId: "personal", messageId: "1930f0c2b1a4d5e6" }) { status messageId } }'
+
+# Label management
+swift run gmail-gateway-threads graphql --query '
+mutation { createLabel(input: { accountId: "personal", name: "Receipts", labelListVisibility: labelShow }) { operation status label { id name } } }'
+```
+
+`updateLabel` patches rather than replaces, so naming only `name` leaves the visibility
+settings untouched.
+
+## Mail Ingestion
+
+`gmail-gateway-message-box` adds existing RFC 822 mail to the mailbox without sending it.
+`rfc822Path` must resolve under a configured `storage.allowed_send_attachment_roots` entry,
+the same rule outbound attachments follow.
+
+```bash
+# Runs the normal delivery pipeline; accepts neverMarkSpam and processForCalendar
+swift run gmail-gateway-message-box graphql --query '
+mutation {
+  importMessage(input: {
+    accountId: "personal",
+    rfc822Path: "/allowed/send/root/archived.eml",
+    labelIds: ["INBOX"],
+    internalDateSource: DATE_HEADER,
+    neverMarkSpam: true
+  }) { operation status messageId threadId }
+}'
+
+# Direct IMAP-APPEND-style add that bypasses most scanning
+swift run gmail-gateway-message-box graphql --query '
+mutation { insertMessage(input: { accountId: "personal", rfc822Path: "/allowed/send/root/archived.eml" }) { status messageId } }'
+```
+
+## Homebrew Formula
+
+Build local formula archives:
+
+```bash
+mise run build:homebrew -- darwin-arm64 darwin-x64
+```
+
+Render formulae after both platform archives exist:
+
+```bash
+mise run homebrew:formula -- 0.1.2
+```
+
+Render directly into the default sibling tap checkout:
+
+```bash
+mise run homebrew:tap-formula -- 0.1.2
+```
+
+Install from the tap after the formula is published:
+
+```bash
+brew tap tacogips/tap
+brew install gmail-gateway-reader
+brew install gmail-gateway-draft
+brew install gmail-gateway-sender
+brew install gmail-gateway-threads
+brew install gmail-gateway-message-box
+```
+
+See `packaging/homebrew/README.md` and `.agents/skills/` for release workflows.
