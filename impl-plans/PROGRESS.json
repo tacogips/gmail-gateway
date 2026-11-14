@@ -1,0 +1,138 @@
+{
+  "lastUpdated": "2026-09-01T00:00:00+09:00",
+  "phases": {
+    "1": {
+      "status": "COMPLETED"
+    },
+    "2": {
+      "status": "IN_PROGRESS"
+    },
+    "3": {
+      "status": "BLOCKED"
+    },
+    "4": {
+      "status": "BLOCKED"
+    }
+  },
+  "plans": {
+    "credential-path-env-overrides": {
+      "phase": 1,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        }
+      }
+    },
+    "graphql-yoga-migration": {
+      "phase": 1,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        }
+      }
+    },
+    "message-file-materialization": {
+      "phase": 1,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        }
+      }
+    },
+    "gmail-oauth-bootstrap": {
+      "phase": 2,
+      "status": "In Progress",
+      "tasks": {
+        "TASK-001": {
+          "status": "Implemented",
+          "parallelizable": false,
+          "deps": []
+        }
+      }
+    },
+    "default-config-fallback": {
+      "phase": 2,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        }
+      }
+    },
+    "gmail-live-read": {
+      "phase": 2,
+      "status": "Blocked on credentials",
+      "tasks": {
+        "TASK-001": {
+          "status": "Implemented",
+          "parallelizable": false,
+          "deps": [
+            "gmail-oauth-bootstrap:TASK-001"
+          ]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": [
+            "TASK-001"
+          ]
+        }
+      }
+    },
+    "draft-default-sender-split": {
+      "phase": 2,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        }
+      }
+    },
+    "draft-lifecycle-and-send-separation": {
+      "phase": 2,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        }
+      }
+    },
+    "gmail-api-surface-gaps": {
+      "phase": 2,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        }
+      }
+    },
+    "mailbox-mutation-and-ingest-binaries": {
+      "phase": 2,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        }
+      }
+    }
+  }
+}
