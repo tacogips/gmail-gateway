@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gmail Gateway Setup"
+  short_description: "Configure Gmail OAuth for mail-gateway"
+  default_prompt: "Use $gmail-gateway-setup to configure and verify Gmail OAuth for mail-gateway."
