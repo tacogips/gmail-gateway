@@ -1,0 +1,869 @@
+import Foundation
+
+private enum TomlSection {
+    case none
+    case storage
+    case writeRetry
+    case credential(Int)
+    case account(Int)
+}
+
+private struct CredentialPathRequest {
+    let configPath: String
+    let credentialId: String
+    let pathKey: String
+    let configValue: String?
+    let environment: [String: String]
+    let context: String
+    let policy: GmailGatewayConfigurationPolicy
+}
+
+public enum GmailGatewayConfigurationPolicy: String, Sendable {
+    case cliDefaults
+    case strictEnvironment
+}
+
+public enum GmailGatewayConfigLoader {
+    static let defaultCredentialId = "gmail-personal"
+    private static let defaultAccountId = "personal"
+
+    public static func getCredentialPathEnvVarName(credentialId: String, pathKey: String) -> String {
+        let safeSuffix = credentialEnvSuffix(credentialId)
+        if pathKey == "oauth_client_secret_path" {
+            return "GMAIL_GATEWAY_CREDENTIAL_\(safeSuffix)_OAUTH_CLIENT_SECRET_PATH"
+        }
+        return "GMAIL_GATEWAY_CREDENTIAL_\(safeSuffix)_TOKEN_STORE_PATH"
+    }
+
+    public static func getCredentialJSONEnvVarName(credentialId: String, valueKey: String) -> String {
+        let safeSuffix = credentialEnvSuffix(credentialId)
+        if valueKey == "oauth_client_secret_json" {
+            return "GMAIL_GATEWAY_CREDENTIAL_\(safeSuffix)_OAUTH_CLIENT_SECRET_JSON"
+        }
+        return "GMAIL_GATEWAY_CREDENTIAL_\(safeSuffix)_TOKEN_STORE_JSON"
+    }
+
+    private static func credentialEnvSuffix(_ credentialId: String) -> String {
+        let suffix = credentialId
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .map { character -> Character in
+                character.isLetter || character.isNumber ? character : "_"
+            }
+        let normalized = String(suffix)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+            .uppercased()
+        return normalized.isEmpty ? "CREDENTIAL" : normalized
+    }
+
+    /// Default directory for persisted OAuth token stores. Tokens are auth
+    /// state, not configuration, so the default lives under XDG_STATE_HOME
+    /// (~/.local/state), never ~/.config. GMAIL_GATEWAY_CREDENTIAL_DIR
+    /// relocates the directory; a per-credential *_TOKEN_STORE_PATH still
+    /// wins for one file.
+    public static func resolveDefaultCredentialDirectory(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        if let credentialDir = nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) {
+            return normalizedPath(credentialDir)
+        }
+        let stateRoot = nonBlank(environment["XDG_STATE_HOME"]).flatMap { $0.hasPrefix("/") ? $0 : nil }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".local")
+                .appendingPathComponent("state")
+                .path
+        return normalizedPath(URL(fileURLWithPath: stateRoot)
+            .appendingPathComponent("gmail-gateway")
+            .appendingPathComponent("credentials")
+            .path)
+    }
+
+    public static func resolveDefaultConfigPath(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        if let xdgConfigHome = nonBlank(environment["XDG_CONFIG_HOME"]), xdgConfigHome.hasPrefix("/") {
+            return normalizedPath(URL(fileURLWithPath: xdgConfigHome)
+                .appendingPathComponent("gmail-gateway")
+                .appendingPathComponent("config.toml")
+                .path)
+        }
+        return normalizedPath(FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config")
+            .appendingPathComponent("gmail-gateway")
+            .appendingPathComponent("config.toml")
+            .path)
+    }
+
+    public static func loadConfig(
+        configPath: String? = nil,
+        environment sourceEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+        validateOAuthClientSecrets: Bool = false,
+        policy: GmailGatewayConfigurationPolicy = .cliDefaults,
+        allowMissingSynthesizedOAuthClient: Bool = false,
+        deferSynthesizedOAuthClientValidation: Bool = false,
+        synthesizedAccessMode: AccessMode = .read
+    ) throws -> GmailGatewayConfig {
+        let explicitConfigPath = nonBlank(configPath) ?? nonBlank(sourceEnvironment["GMAIL_GATEWAY_CONFIG"])
+        let usesImplicitDefaultConfig = explicitConfigPath == nil && policy == .cliDefaults
+        let selectedConfigPath: String
+        if policy == .strictEnvironment {
+            guard let explicitConfigPath else {
+                throw configError("SDK execution requires GMAIL_GATEWAY_CONFIG in its supplied environment")
+            }
+            guard explicitConfigPath.hasPrefix("/"), !usesHomeExpansion(explicitConfigPath) else {
+                throw configError("SDK GMAIL_GATEWAY_CONFIG must be an absolute non-home-expanded path")
+            }
+            selectedConfigPath = normalizedPath(explicitConfigPath)
+        } else {
+            selectedConfigPath = normalizedPath(
+                explicitConfigPath ?? resolveDefaultConfigPath(environment: sourceEnvironment)
+            )
+        }
+        let source: String
+        do {
+            source = try String(contentsOfFile: selectedConfigPath, encoding: .utf8)
+        } catch {
+            if usesImplicitDefaultConfig,
+               !FileManager.default.fileExists(atPath: selectedConfigPath) {
+                let config = try defaultConfig(configPath: selectedConfigPath, environment: gmailCredentialEnvironment(sourceEnvironment), accessMode: synthesizedAccessMode)
+                if validateOAuthClientSecrets {
+                    try validateOAuthClientSecretPaths(
+                        config.credentials,
+                        // The implicit fallback intentionally has no required
+                        // client file. Explicit environment sources still use
+                        // their selected source and must parse successfully.
+                        allowMissingSynthesizedOAuthClient: true,
+                        deferSynthesizedOAuthClientValidation: deferSynthesizedOAuthClientValidation
+                    )
+                }
+                return config
+            }
+            throw GmailGatewayError(
+                "Failed to read config: \(selectedConfigPath)",
+                code: .configInvalid,
+                exitCode: .configurationError,
+                details: ["cause": error.localizedDescription]
+            )
+        }
+
+        let parsed = try parseTomlSubset(source)
+        guard let storageRecord = parsed.storage else {
+            throw configError("storage must be a table/object")
+        }
+        if parsed.credentials.isEmpty {
+            throw configError("credentials must be a non-empty array")
+        }
+        if parsed.accounts.isEmpty {
+            throw configError("accounts must be a non-empty array")
+        }
+
+        let environment = try gmailCredentialEnvironment(
+            sourceEnvironment, credentialIDs: parsed.credentials.compactMap { $0["id"] as? String }
+        )
+        let storage = try parseStorageConfig(
+            storageRecord,
+            configPath: selectedConfigPath,
+            policy: policy
+        )
+        let credentials = try parsed.credentials.enumerated().map { index, record in
+            try parseCredentialConfig(
+                record,
+                index: index,
+                configPath: selectedConfigPath,
+                environment: environment,
+                policy: policy
+            )
+        }
+        let accounts = try parsed.accounts.enumerated().map { index, record in
+            try parseAccountConfig(record, index: index)
+        }
+
+        try ensureUnique(credentials.map(\.id), context: "credentials.id")
+        try ensureUniqueCredentialEnvSuffixes(credentials)
+        try ensureUnique(accounts.map(\.id), context: "accounts.id")
+        try ensureUnique(credentials.map(\.tokenStorePath), context: "credentials.token_store_path")
+        try validateAccountCredentialLinks(credentials: credentials, accounts: accounts)
+
+        if validateOAuthClientSecrets {
+            try validateOAuthClientSecretPaths(
+                credentials,
+                allowMissingSynthesizedOAuthClient: allowMissingSynthesizedOAuthClient,
+                deferSynthesizedOAuthClientValidation: deferSynthesizedOAuthClientValidation
+            )
+        }
+
+        return GmailGatewayConfig(
+            writeRetry: try GmailWriteRetryPolicy.load(record: parsed.writeRetry, environment: sourceEnvironment),
+            configPath: selectedConfigPath,
+            storage: storage,
+            credentials: credentials,
+            accounts: accounts
+        )
+    }
+
+    public static func validateConfig(
+        configPath: String? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        allowMissingSynthesizedOAuthClient: Bool = false,
+        deferSynthesizedOAuthClientValidation: Bool = false
+    ) throws -> [String: Any] {
+        let config = try loadConfig(
+            configPath: configPath,
+            environment: environment,
+            validateOAuthClientSecrets: true,
+            allowMissingSynthesizedOAuthClient: allowMissingSynthesizedOAuthClient,
+            deferSynthesizedOAuthClientValidation: deferSynthesizedOAuthClientValidation
+        )
+        return validationOutput(config)
+    }
+
+    static func validationOutput(_ config: GmailGatewayConfig) -> [String: Any] {
+        [
+            "ok": true,
+            "configPath": config.configPath,
+            "fallbackConfig": config.accounts.contains { $0.isFallback },
+            "accountIds": config.accounts.map(\.id),
+            "credentialIds": config.credentials.map(\.id)
+        ]
+    }
+
+    private static func defaultConfig(
+        configPath: String,
+        environment: [String: String],
+        accessMode: AccessMode
+    ) throws -> GmailGatewayConfig {
+        let storage = StorageConfig(
+            cacheDir: defaultDataDirectory(environment: environment),
+            attachmentDir: normalizedPath(URL(fileURLWithPath: defaultCacheDirectory(environment: environment))
+                .appendingPathComponent("attachments", isDirectory: true)
+                .path),
+            allowedSendAttachmentRoots: [
+                normalizedPath(URL(fileURLWithPath: defaultDataDirectory(environment: environment))
+                    .appendingPathComponent("send-attachments", isDirectory: true)
+                    .path)
+            ]
+        )
+        let tokenFilename = accessMode == .read ? defaultCredentialId : defaultCredentialId + "-" + accessMode.rawValue.replacingOccurrences(of: "_", with: "-")
+        let credential = CredentialConfig(
+            id: defaultCredentialId,
+            provider: .gmail,
+            accessMode: accessMode,
+            directAccessToken: nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_GMAIL_PERSONAL_ACCESS_TOKEN"]),
+            oauthClientSecretPath: try resolveCredentialPath(CredentialPathRequest(
+                configPath: configPath,
+                credentialId: defaultCredentialId,
+                pathKey: "oauth_client_secret_path",
+                configValue: "google-client.json",
+                environment: environment,
+                context: "credentials.\(defaultCredentialId).oauth_client_secret_path",
+                policy: .cliDefaults
+            )),
+            oauthClientSecretJSON: credentialJSONEnvValue(
+                credentialId: defaultCredentialId,
+                valueKey: "oauth_client_secret_json",
+                environment: environment
+            ),
+            tokenStorePath: try resolveCredentialPath(CredentialPathRequest(
+                configPath: configPath,
+                credentialId: defaultCredentialId,
+                pathKey: "token_store_path",
+                configValue: URL(fileURLWithPath: resolveDefaultCredentialDirectory(environment: environment))
+                    .appendingPathComponent("\(tokenFilename).json")
+                    .path,
+                environment: environment,
+                context: "credentials.\(defaultCredentialId).token_store_path",
+                policy: .cliDefaults
+            )),
+            tokenStoreJSON: credentialJSONEnvValue(
+                credentialId: defaultCredentialId,
+                valueKey: "token_store_json",
+                environment: environment
+            ),
+            oauthClientSecretSource: nonBlank(environment[GmailGatewayConfigLoader.getCredentialPathEnvVarName(
+                credentialId: defaultCredentialId,
+                pathKey: "oauth_client_secret_path"
+            )]) == nil ? .synthesizedDefault : .environmentPath,
+            tokenStoreSource: nonBlank(environment[GmailGatewayConfigLoader.getCredentialPathEnvVarName(
+                credentialId: defaultCredentialId,
+                pathKey: "token_store_path"
+            )]) != nil ? .environmentPath :
+                (nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) == nil ? .synthesizedDefault : .relocatedPath),
+            legacyDefaultTokenStorePath: accessMode == .read ? URL(fileURLWithPath: configPath).deletingLastPathComponent()
+                .appendingPathComponent("tokens/\(defaultCredentialId).json").path : nil
+        )
+        return GmailGatewayConfig(
+            writeRetry: try GmailWriteRetryPolicy.load(environment: environment),
+            configPath: configPath,
+            storage: storage,
+            credentials: [credential],
+            accounts: [
+                AccountConfig(
+                    id: defaultAccountId,
+                    provider: .gmail,
+                    emailAddress: "\(defaultAccountId)@example.invalid",
+                    credentialId: credential.id,
+                    defaultLabelIds: ["INBOX"],
+                    isFallback: true
+                )
+            ]
+        )
+    }
+
+    private static func defaultDataDirectory(environment: [String: String]) -> String {
+        if let xdgDataHome = nonBlank(environment["XDG_DATA_HOME"]) {
+            return normalizedPath(URL(fileURLWithPath: xdgDataHome)
+                .appendingPathComponent("gmail-gateway", isDirectory: true)
+                .path)
+        }
+        return normalizedPath(FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local", isDirectory: true)
+            .appendingPathComponent("share", isDirectory: true)
+            .appendingPathComponent("gmail-gateway", isDirectory: true)
+            .path)
+    }
+
+    private static func defaultCacheDirectory(environment: [String: String]) -> String {
+        if let xdgCacheHome = nonBlank(environment["XDG_CACHE_HOME"]) {
+            return normalizedPath(URL(fileURLWithPath: xdgCacheHome)
+                .appendingPathComponent("gmail-gateway", isDirectory: true)
+                .path)
+        }
+        return normalizedPath(FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache", isDirectory: true)
+            .appendingPathComponent("gmail-gateway", isDirectory: true)
+            .path)
+    }
+
+    private static func credentialJSONEnvValue(
+        credentialId: String,
+        valueKey: String,
+        environment: [String: String]
+    ) -> String? {
+        nonBlank(environment[getCredentialJSONEnvVarName(credentialId: credentialId, valueKey: valueKey)])
+    }
+}
+
+private struct ParsedToml {
+    var storage: [String: Any]?
+    var writeRetry: [String: Any] = [:]
+    var credentials: [[String: Any]]
+    var accounts: [[String: Any]]
+}
+
+private func parseTomlSubset(_ source: String) throws -> ParsedToml {
+    var parsed = ParsedToml(storage: nil, credentials: [], accounts: [])
+    var section = TomlSection.none
+
+    for rawLine in source.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = try stripTomlComment(String(rawLine)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if line.isEmpty || line.hasPrefix("#") {
+            continue
+        }
+        if line == "[write_retry]" {
+            section = .writeRetry
+            continue
+        }
+        if line == "[storage]" {
+            parsed.storage = parsed.storage ?? [:]
+            section = .storage
+            continue
+        }
+        if line == "[[credentials]]" {
+            parsed.credentials.append([:])
+            section = .credential(parsed.credentials.count - 1)
+            continue
+        }
+        if line == "[[accounts]]" {
+            parsed.accounts.append([:])
+            section = .account(parsed.accounts.count - 1)
+            continue
+        }
+        guard let equals = line.firstIndex(of: "=") else {
+            throw configError("config contains an unsupported TOML line: \(line)")
+        }
+        let key = line[..<equals].trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawValue = line[line.index(after: equals)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        let value: Any
+        if case .writeRetry = section {
+            guard !rawValue.isEmpty, rawValue.utf8.count <= 2,
+                  rawValue.utf8.allSatisfy({ (48...57).contains($0) }), let number = Int(rawValue) else {
+                throw configError("write_retry values must be bounded integers")
+            }
+            value = number
+        } else {
+            value = try parseTomlValue(rawValue)
+        }
+        switch section {
+        case .writeRetry:
+            parsed.writeRetry[key] = value
+        case .storage:
+            parsed.storage?[key] = value
+        case .credential(let index):
+            parsed.credentials[index][key] = value
+        case .account(let index):
+            parsed.accounts[index][key] = value
+        case .none:
+            throw configError("config key appears outside a supported section: \(key)")
+        }
+    }
+
+    return parsed
+}
+
+private func parseTomlValue(_ rawValue: String) throws -> Any {
+    if rawValue.hasPrefix("\""),
+       rawValue.hasSuffix("\"") {
+        return try parseTomlBasicString(rawValue)
+    }
+    if rawValue.hasPrefix("["),
+       rawValue.hasSuffix("]") {
+        let inner = String(rawValue.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        if inner.isEmpty {
+            return [String]()
+        }
+        return try splitTomlArray(inner).map { item in
+            let trimmed = item.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix("\""),
+                  trimmed.hasSuffix("\"") else {
+                throw configError("array values must be strings")
+            }
+            return try parseTomlBasicString(trimmed)
+        }
+    }
+    throw configError("config contains an unsupported TOML value: \(rawValue)")
+}
+
+private func stripTomlComment(_ source: String) throws -> String {
+    var output = ""
+    var inString = false
+    var escaping = false
+    for character in source {
+        if escaping {
+            output.append(character)
+            escaping = false
+            continue
+        }
+        if character == "\\" && inString {
+            output.append(character)
+            escaping = true
+            continue
+        }
+        if character == "\"" {
+            output.append(character)
+            inString.toggle()
+            continue
+        }
+        if character == "#",
+           !inString {
+            return output
+        }
+        output.append(character)
+    }
+    guard !inString else {
+        throw configError("config contains an unterminated string")
+    }
+    return output
+}
+
+private func parseTomlBasicString(_ rawValue: String) throws -> String {
+    var output = ""
+    var escaping = false
+    let inner = rawValue.dropFirst().dropLast()
+    for character in inner {
+        if escaping {
+            switch character {
+            case "\"":
+                output.append("\"")
+            case "\\":
+                output.append("\\")
+            case "n":
+                output.append("\n")
+            case "r":
+                output.append("\r")
+            case "t":
+                output.append("\t")
+            default:
+                throw configError("config contains an unsupported string escape: \\\(character)")
+            }
+            escaping = false
+            continue
+        }
+        if character == "\\" {
+            escaping = true
+            continue
+        }
+        output.append(character)
+    }
+    guard !escaping else {
+        throw configError("config contains an unterminated string escape")
+    }
+    return output
+}
+
+private func splitTomlArray(_ source: String) throws -> [String] {
+    var values: [String] = []
+    var current = ""
+    var inString = false
+    var escaping = false
+    for character in source {
+        if escaping {
+            current.append(character)
+            escaping = false
+            continue
+        }
+        if character == "\\" {
+            current.append(character)
+            escaping = true
+            continue
+        }
+        if character == "\"" {
+            inString.toggle()
+            current.append(character)
+            continue
+        }
+        if character == ",",
+           !inString {
+            values.append(current)
+            current = ""
+            continue
+        }
+        current.append(character)
+    }
+    if !current.isEmpty {
+        values.append(current)
+    }
+    guard !inString else {
+        throw configError("array contains an unterminated string")
+    }
+    return values
+}
+
+private func parseStorageConfig(
+    _ record: [String: Any],
+    configPath: String,
+    policy: GmailGatewayConfigurationPolicy
+) throws -> StorageConfig {
+    StorageConfig(
+        cacheDir: try resolveConfigRelativePath(
+            configPath: configPath,
+            rawPath: readString(record["cache_dir"], "storage.cache_dir"),
+            policy: policy
+        ),
+        attachmentDir: try resolveConfigRelativePath(
+            configPath: configPath,
+            rawPath: readString(record["attachment_dir"], "storage.attachment_dir"),
+            policy: policy
+        ),
+        allowedSendAttachmentRoots: try readOptionalStringArray(
+            record["allowed_send_attachment_roots"],
+            "storage.allowed_send_attachment_roots"
+        )
+            .map {
+                try resolveConfigRelativePath(
+                    configPath: configPath,
+                    rawPath: $0,
+                    policy: policy
+                )
+            }
+    )
+}
+
+private func parseCredentialConfig(
+    _ record: [String: Any],
+    index: Int,
+    configPath: String,
+    environment: [String: String],
+    policy: GmailGatewayConfigurationPolicy
+) throws -> CredentialConfig {
+    let contextBase = "credentials[\(index)]"
+    let credentialId = try readString(record["id"], "\(contextBase).id")
+    let oauthClientSecretJSON = nonBlank(environment[
+        GmailGatewayConfigLoader.getCredentialJSONEnvVarName(
+            credentialId: credentialId,
+            valueKey: "oauth_client_secret_json"
+        )
+    ])
+    let tokenStoreJSON = nonBlank(environment[
+        GmailGatewayConfigLoader.getCredentialJSONEnvVarName(
+            credentialId: credentialId,
+            valueKey: "token_store_json"
+        )
+    ])
+    let oauthPath = try resolvePersistentCredentialPath(
+        configPath: configPath,
+        credentialId: credentialId,
+        pathKey: "oauth_client_secret_path",
+        configValue: readOptionalString(record["oauth_client_secret_path"], "\(contextBase).oauth_client_secret_path"),
+        synthesizedValue: "google-client.json",
+        environment: environment,
+        policy: policy
+    )
+    let tokenPath = try resolvePersistentCredentialPath(
+        configPath: configPath,
+        credentialId: credentialId,
+        pathKey: "token_store_path",
+        configValue: readOptionalString(record["token_store_path"], "\(contextBase).token_store_path"),
+        synthesizedValue: URL(fileURLWithPath: GmailGatewayConfigLoader.resolveDefaultCredentialDirectory(environment: environment))
+            .appendingPathComponent("\(credentialId).json")
+            .path,
+        environment: environment,
+        policy: policy
+    )
+    return CredentialConfig(
+        id: credentialId,
+        provider: try readProvider(record["provider"], "\(contextBase).provider"),
+        accessMode: try readAccessMode(record["access_mode"], "\(contextBase).access_mode"),
+        directAccessToken: nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_" + credentialId.uppercased().replacingOccurrences(of: "-", with: "_") + "_ACCESS_TOKEN"]),
+        oauthClientSecretPath: oauthPath.path,
+        oauthClientSecretJSON: oauthClientSecretJSON,
+        tokenStorePath: tokenPath.path,
+        tokenStoreJSON: tokenStoreJSON,
+        oauthClientSecretSource: oauthPath.source,
+        tokenStoreSource: tokenPath.source
+    )
+}
+
+private struct PersistentCredentialPath {
+    let path: String
+    let source: GmailCredentialSourceKind
+}
+
+private func resolvePersistentCredentialPath(
+    configPath: String,
+    credentialId: String,
+    pathKey: String,
+    configValue: String?,
+    synthesizedValue: String,
+    environment: [String: String],
+    policy: GmailGatewayConfigurationPolicy
+) throws -> PersistentCredentialPath {
+    let envName = GmailGatewayConfigLoader.getCredentialPathEnvVarName(credentialId: credentialId, pathKey: pathKey)
+    if let value = nonBlank(environment[envName]) {
+        return PersistentCredentialPath(
+            path: try resolveConfigRelativePath(configPath: configPath, rawPath: value, policy: policy),
+            source: .environmentPath
+        )
+    }
+    if let configValue {
+        return PersistentCredentialPath(
+            path: try resolveConfigRelativePath(configPath: configPath, rawPath: configValue, policy: policy),
+            source: .configuredPath
+        )
+    }
+    let source: GmailCredentialSourceKind = pathKey == "token_store_path" && nonBlank(environment["GMAIL_GATEWAY_CREDENTIAL_DIR"]) != nil
+        ? .relocatedPath
+        : .synthesizedDefault
+    return PersistentCredentialPath(
+        path: try resolveConfigRelativePath(configPath: configPath, rawPath: synthesizedValue, policy: policy),
+        source: source
+    )
+}
+
+private func parseAccountConfig(_ record: [String: Any], index: Int) throws -> AccountConfig {
+    let contextBase = "accounts[\(index)]"
+    let emailAddress = try readString(record["email_address"], "\(contextBase).email_address")
+    if !isValidConfiguredMailboxAddress(emailAddress) {
+        throw configError("\(contextBase).email_address must be a valid mailbox address")
+    }
+    return AccountConfig(
+        id: try readString(record["id"], "\(contextBase).id"),
+        provider: try readProvider(record["provider"], "\(contextBase).provider"),
+        emailAddress: emailAddress,
+        credentialId: try readString(record["credential_id"], "\(contextBase).credential_id"),
+        defaultLabelIds: try readOptionalStringArray(record["default_label_ids"], "\(contextBase).default_label_ids")
+    )
+}
+
+private func isValidConfiguredMailboxAddress(_ emailAddress: String) -> Bool {
+    if emailAddress.unicodeScalars.contains(where: isWhitespaceOrControlCharacter) {
+        return false
+    }
+
+    let parts = emailAddress.split(separator: "@", omittingEmptySubsequences: false)
+    guard parts.count == 2 else {
+        return false
+    }
+
+    let localPart = String(parts[0])
+    let domainPart = String(parts[1])
+    guard !localPart.isEmpty,
+          !domainPart.isEmpty,
+          !localPart.hasPrefix("."),
+          !localPart.hasSuffix("."),
+          domainPart.contains("."),
+          !domainPart.hasPrefix("."),
+          !domainPart.hasSuffix("."),
+          !domainPart.contains("..") else {
+        return false
+    }
+
+    return true
+}
+
+private func isWhitespaceOrControlCharacter(_ scalar: Unicode.Scalar) -> Bool {
+    CharacterSet.whitespacesAndNewlines.contains(scalar) ||
+        CharacterSet.controlCharacters.contains(scalar)
+}
+
+private func resolveCredentialPath(_ request: CredentialPathRequest) throws -> String {
+    let envName = GmailGatewayConfigLoader.getCredentialPathEnvVarName(
+        credentialId: request.credentialId,
+        pathKey: request.pathKey
+    )
+    let selected = nonBlank(request.environment[envName]) ?? request.configValue
+    guard let selected else {
+        throw configError("\(request.context) must be set in config or \(envName)")
+    }
+    return try resolveConfigRelativePath(
+        configPath: request.configPath,
+        rawPath: selected,
+        policy: request.policy
+    )
+}
+
+private func resolveConfigRelativePath(
+    configPath: String,
+    rawPath: String,
+    policy: GmailGatewayConfigurationPolicy
+) throws -> String {
+    if policy == .strictEnvironment, usesHomeExpansion(rawPath) {
+        throw configError("SDK configuration paths must not use home-directory expansion")
+    }
+    // Expanding first lets config values use "~/..." as an absolute home path
+    // instead of being misread as a config-directory-relative segment.
+    let expanded = normalizedPath(rawPath)
+    if expanded.hasPrefix("/") {
+        return expanded
+    }
+    let configDirectory = URL(fileURLWithPath: configPath).deletingLastPathComponent()
+    return normalizedPath(configDirectory.appendingPathComponent(rawPath).path)
+}
+
+private func usesHomeExpansion(_ path: String) -> Bool {
+    path.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("~")
+}
+
+private func validateOAuthClientSecretPaths(
+    _ credentials: [CredentialConfig],
+    allowMissingSynthesizedOAuthClient: Bool,
+    deferSynthesizedOAuthClientValidation: Bool
+) throws {
+    for credential in credentials {
+        if let clientJSON = credential.oauthClientSecretJSON {
+            _ = try loadGmailOAuthClientRecord(from: Data(clientJSON.utf8))
+            continue
+        }
+
+        // Persistent validation must preserve the same vault-before-file
+        // precedence used during normal resolution. Its coordinator validates
+        // this source after attempting the exact vault profile, so a malformed
+        // lower-priority synthesized file cannot reject a valid vault profile.
+        if deferSynthesizedOAuthClientValidation,
+           credential.oauthClientSecretSource == .synthesizedDefault {
+            continue
+        }
+        let mayUsePersistentClient = allowMissingSynthesizedOAuthClient &&
+            credential.oauthClientSecretSource == .synthesizedDefault
+        guard FileManager.default.isReadableFile(atPath: credential.oauthClientSecretPath) else {
+            if mayUsePersistentClient {
+                continue
+            }
+            throw configError(
+                "credentials.\(credential.id).oauth_client_secret_path is not readable: " +
+                    credential.oauthClientSecretPath
+            )
+        }
+
+        // Environment JSON, environment paths, and TOML paths have already
+        // been resolved by precedence. Validate that selected source with the
+        // same parser used by setup, login, and normal credential resolution.
+        _ = try loadGmailOAuthClientRecord(from: credential.oauthClientSecretPath)
+    }
+}
+
+private func readProvider(_ value: Any?, _ context: String) throws -> MailProvider {
+    let provider = try readString(value, context)
+    guard let parsed = MailProvider(rawValue: provider) else {
+        throw configError("\(context) must currently be \"gmail\"")
+    }
+    return parsed
+}
+
+private func readAccessMode(_ value: Any?, _ context: String) throws -> AccessMode {
+    let raw = value == nil ? "read" : try readString(value, context)
+    guard let parsed = AccessMode(rawValue: raw) else {
+        throw configError(
+            "\(context) must be one of \"read\", \"read_send\", \"read_modify\", or \"full\""
+        )
+    }
+    return parsed
+}
+
+private func readString(_ value: Any?, _ context: String) throws -> String {
+    guard let string = value as? String,
+          !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw configError("\(context) must be a non-empty string")
+    }
+    return string
+}
+
+private func readOptionalString(_ value: Any?, _ context: String) throws -> String? {
+    guard value != nil else {
+        return nil
+    }
+    return try readString(value, context)
+}
+
+private func readOptionalStringArray(_ value: Any?, _ context: String) throws -> [String] {
+    guard value != nil else {
+        return []
+    }
+    guard let values = value as? [String] else {
+        throw configError("\(context) must be an array of strings")
+    }
+    for (index, item) in values.enumerated() where item.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        throw configError("\(context)[\(index)] must be a non-empty string")
+    }
+    return values
+}
+
+private func ensureUnique(_ values: [String], context: String) throws {
+    var seen: Set<String> = []
+    for value in values {
+        if seen.contains(value) {
+            throw configError("\(context) contains a duplicate value: \(value)")
+        }
+        seen.insert(value)
+    }
+}
+
+private func ensureUniqueCredentialEnvSuffixes(_ credentials: [CredentialConfig]) throws {
+    var seen: [String: String] = [:]
+    for credential in credentials {
+        let suffix = GmailGatewayConfigLoader.getCredentialPathEnvVarName(
+            credentialId: credential.id,
+            pathKey: "token_store_path"
+        )
+        if let existing = seen[suffix] {
+            throw configError(
+                "credentials.id values \(existing) and \(credential.id) resolve to the same environment variable suffix"
+            )
+        }
+        seen[suffix] = credential.id
+    }
+}
+
+private func validateAccountCredentialLinks(credentials: [CredentialConfig], accounts: [AccountConfig]) throws {
+    let credentialsById = Dictionary(uniqueKeysWithValues: credentials.map { ($0.id, $0) })
+    for account in accounts {
+        guard let credential = credentialsById[account.credentialId] else {
+            throw configError("accounts.\(account.id) references unknown credential: \(account.credentialId)")
+        }
+        if credential.provider != account.provider {
+            throw configError("accounts.\(account.id) provider does not match credential provider")
+        }
+    }
+}
+
+private func configError(_ message: String) -> GmailGatewayError {
+    GmailGatewayError(message, code: .configInvalid, exitCode: .configurationError)
+}
